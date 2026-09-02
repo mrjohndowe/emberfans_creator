@@ -280,6 +280,7 @@ app.post('/api/communities', authenticate, requireRole('performer', 'admin'), (r
       db.prepare("INSERT INTO community_members (community_id, user_id, role) VALUES (?, ?, 'owner')").run(created.lastInsertRowid, request.user.id);
       const category = db.prepare('INSERT INTO channel_categories (community_id, name, position) VALUES (?, ?, ?)').run(created.lastInsertRowid, 'GENERAL', 0);
       db.prepare('INSERT INTO channels (community_id, name, category_id, position) VALUES (?, ?, ?, ?), (?, ?, ?, ?)').run(created.lastInsertRowid, 'welcome', category.lastInsertRowid, 0, created.lastInsertRowid, 'general', category.lastInsertRowid, 1);
+      communityAudit(created.lastInsertRowid, request.user.id, 'community_created', { name: name.trim(), slug });
       return created.lastInsertRowid;
     })();
     response.status(201).json({ community: db.prepare('SELECT * FROM communities WHERE id = ?').get(result) });
@@ -354,6 +355,7 @@ app.put('/api/communities/:id/sidebar', authenticate, (request, response) => {
     const updateChannel = db.prepare('UPDATE channels SET category_id = ?, position = ? WHERE id = ? AND community_id = ?');
     categories.forEach((category, position) => updateCategory.run(position, Number(category.id), request.params.id));
     channels.forEach(channel => updateChannel.run(channel.categoryId ? Number(channel.categoryId) : null, Number(channel.position), Number(channel.id), request.params.id));
+    communityAudit(request.params.id, request.user.id, 'sidebar_reordered', { categoryCount: categories.length, channelCount: channels.length });
   })();
   response.sendStatus(204);
 });
@@ -453,8 +455,10 @@ app.delete('/api/channels/:id/join', authenticate, (request, response) => {
 app.delete('/api/channel-messages/:id', authenticate, (request, response) => {
   const message = db.prepare('SELECT channel_messages.*, channels.community_id FROM channel_messages JOIN channels ON channels.id = channel_messages.channel_id WHERE channel_messages.id = ?').get(request.params.id);
   if (!message) return response.status(404).json({ error: 'Message was not found.' });
-  if (message.author_id !== request.user.id && !communityModerator(message.community_id, request.user)) return response.status(403).json({ error: 'Only the author or a moderator can remove this message.' });
+  const isModeratorAction = communityModerator(message.community_id, request.user);
+  if (message.author_id !== request.user.id && !isModeratorAction) return response.status(403).json({ error: 'Only the author or a moderator can remove this message.' });
   db.prepare('DELETE FROM channel_messages WHERE id = ?').run(message.id);
+  if (isModeratorAction) communityAudit(message.community_id, request.user.id, 'message_removed', { messageId: message.id, channelId: message.channel_id, authorId: message.author_id });
   response.sendStatus(204);
 });
 

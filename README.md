@@ -50,7 +50,7 @@ Uploads are stored outside the public static directory. The browser can request 
 6. Community moderators can right-click category headers or channels to open the typed-channel creation modal or create a category. Drag a channel to another category to persist its sidebar placement.
 7. Community moderators can delete a channel from its right-click menu only after typing the channel's exact name. This permanently removes the channel, its messages or forum posts, and its active room entries.
 8. Community moderators can delete a category from its right-click menu only after typing the category's exact name. Its channels are moved to another category so their messages and forum posts remain available.
-9. Community owners, moderators, and administrators have an Administration cog in the sidebar. Its Audit Log is read-only, listing recorded channel and category creation/deletion activity with the acting account and timestamp.
+9. Community owners, moderators, and administrators have an Administration cog in the sidebar. Its Audit Log is read-only, listing community/channel/category creation and deletion, sidebar reordering, and moderator message removal with the acting account and timestamp. Normal member activity—chat messages and joining or leaving voice rooms—is deliberately excluded.
 
 The direct-message API is available for signed-in users. The initial community screen focuses on channels first; a dedicated inbox interface is the next client-side community enhancement.
 

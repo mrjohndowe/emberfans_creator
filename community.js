@@ -50,6 +50,9 @@ function auditDescription(entry) {
   if (entry.action === 'channel_deleted') return `Deleted #${details.name || 'channel'} (${details.type || 'channel'}).`;
   if (entry.action === 'category_created') return `Created the ${details.name || 'unnamed'} category.`;
   if (entry.action === 'category_deleted') return `Deleted the ${details.name || 'unnamed'} category and moved ${details.movedChannelCount || 0} channel${details.movedChannelCount === 1 ? '' : 's'} to ${details.fallbackCategory || 'another category'}.`;
+  if (entry.action === 'community_created') return `Created the ${details.name || 'community'} community.`;
+  if (entry.action === 'sidebar_reordered') return `Reordered the sidebar (${details.channelCount || 0} channels).`;
+  if (entry.action === 'message_removed') return `Removed a message in channel ${details.channelId || 'unknown'}.`;
   return entry.action.replaceAll('_', ' ');
 }
 
