@@ -6,8 +6,8 @@ const form = document.querySelector('#messageForm');
 let user, community, channel, sidebar, suppressChannelClickUntil = 0;
 let voiceTestStream = null;
 
-const icons = { text: '#', forum: '[]', voice: '🔊', auditorium: '🎙' };
-const titles = { text: 'TEXT CHANNEL', forum: 'FORUM CHANNEL', voice: 'VOICE CHANNEL', auditorium: 'AUDITORIUM' };
+const icons = { text: '#', forum: '▤', media: '▦', voice: '🔊', auditorium: '🎙' };
+const titles = { text: 'TEXT CHANNEL', forum: 'FORUM CHANNEL', media: 'MEDIA CHANNEL', voice: 'VOICE CHANNEL', auditorium: 'AUDITORIUM' };
 
 const menu = document.createElement('div');
 menu.style.cssText = 'display:none;position:fixed;z-index:20;min-width:190px;padding:7px;background:#26272f;border:1px solid #3b3d49;border-radius:7px;box-shadow:0 12px 35px #0008';
@@ -16,7 +16,7 @@ document.addEventListener('click', () => menu.style.display = 'none');
 
 const channelModal = document.createElement('div');
 channelModal.style.cssText = 'display:none;position:fixed;inset:0;z-index:30;place-items:center;background:#08090dbb';
-channelModal.innerHTML = '<form style="width:min(380px,calc(100% - 30px));padding:24px;background:#20212a;border:1px solid #40424e;border-radius:10px;display:grid;gap:14px"><strong id="channelModalTitle" style="font-size:18px">Create Channel</strong><label style="display:grid;gap:6px;font-size:11px">Channel name<input id="channelModalName" maxlength="48" required style="padding:10px;border:1px solid #444651;border-radius:6px;background:#13141b;color:#fff"></label><label style="display:grid;gap:6px;font-size:11px">Channel type<select id="channelModalType" style="padding:10px;border:1px solid #444651;border-radius:6px;background:#13141b;color:#fff"><option value="text">Text channel</option><option value="forum">Forum channel</option><option value="voice">Voice channel</option><option value="auditorium">Auditorium</option></select></label><div style="display:flex;justify-content:end;gap:8px"><button type="button" id="channelModalCancel" class="secondary-button">Cancel</button><button class="primary-button">Create channel</button></div></form>';
+channelModal.innerHTML = '<form style="width:min(380px,calc(100% - 30px));padding:24px;background:#20212a;border:1px solid #40424e;border-radius:10px;display:grid;gap:14px"><strong id="channelModalTitle" style="font-size:18px">Create Channel</strong><label style="display:grid;gap:6px;font-size:11px">Channel name<input id="channelModalName" maxlength="48" required style="padding:10px;border:1px solid #444651;border-radius:6px;background:#13141b;color:#fff"></label><label style="display:grid;gap:6px;font-size:11px">Channel type<select id="channelModalType" style="padding:10px;border:1px solid #444651;border-radius:6px;background:#13141b;color:#fff"><option value="text">Text channel</option><option value="forum">Forum channel</option><option value="media">Media channel</option><option value="voice">Voice channel</option><option value="auditorium">Auditorium</option></select></label><div style="display:flex;justify-content:end;gap:8px"><button type="button" id="channelModalCancel" class="secondary-button">Cancel</button><button class="primary-button">Create channel</button></div></form>';
 document.body.append(channelModal);
 
 const settingsModal = document.createElement('div');
@@ -43,6 +43,10 @@ function esc(value) {
 
 function canEdit() {
   return user && (['owner', 'moderator'].includes(community?.member_role) || user.role === 'admin');
+}
+
+function channelKind(channelItem) {
+  return channelItem.display_mode === 'gallery' ? 'media' : channelItem.type;
 }
 
 function auditDescription(entry) {
@@ -119,6 +123,7 @@ function categoryActions(category) {
   return [
     { label: 'Create Text Channel', action: () => openCreateModal(category, 'text') },
     { label: 'Create Forum Channel', action: () => openCreateModal(category, 'forum') },
+    { label: 'Create Media Channel', action: () => openCreateModal(category, 'media') },
     { label: 'Create Voice Channel', action: () => openCreateModal(category, 'voice') },
     { label: 'Create Auditorium', action: () => openCreateModal(category, 'auditorium') },
     { label: 'Create Category', action: createCategory },
@@ -144,11 +149,38 @@ async function deleteChannel(channelItem) {
   } catch (error) { alert(error.message); }
 }
 
-function render(items, forum) {
-  messages.innerHTML = items.length ? items.map(item => forum
-    ? `<article style="background:#1a1b25;border:1px solid #323442;border-radius:9px;padding:15px"><h3>${esc(item.title)}</h3><small>${esc(item.author.username)} - ${new Date(item.createdAt).toLocaleString()}</small><p>${esc(item.body)}</p></article>`
-    : `<article class="community-message"><span class="avatar">${esc(item.author.username.slice(0, 2))}</span><p><strong>${esc(item.author.username)}</strong><time>${new Date(item.createdAt).toLocaleString()}</time><br>${esc(item.body)}</p></article>`
-  ).join('') : '<p class="empty">Nothing here yet.</p>';
+function render(items) {
+  messages.classList.remove('forum-view');
+  messages.classList.remove('gallery-view');
+  messages.innerHTML = items.length ? items.map(item => `<article class="community-message"><span class="avatar">${esc(item.author.username.slice(0, 2))}</span><p><strong>${esc(item.author.username)}</strong><time>${new Date(item.createdAt).toLocaleString()}</time><br>${esc(item.body)}</p></article>`).join('') : '<p class="empty">Nothing here yet.</p>';
+}
+
+function renderForum(posts) {
+  messages.classList.remove('gallery-view');
+  messages.classList.add('forum-view');
+  const discussions = posts.length ? posts.map(post => `<article class="forum-post"><div class="forum-post-icon">▤</div><div><h3>${esc(post.title)}</h3><p>${esc(post.body)}</p><small>Started by <b>${esc(post.author.username)}</b> · ${new Date(post.createdAt).toLocaleString()}</small></div><span class="forum-replies">Discussion</span></article>`).join('') : '<div class="forum-empty"><div>▤</div><h2>No discussions yet</h2><p>Start the first conversation in this forum.</p></div>';
+  messages.innerHTML = `<section class="forum-hero"><span>FORUM</span><h2>${esc(channel.name)}</h2><p>Browse discussions or start a new topic for this community.</p></section><section class="forum-topic-list"><div class="forum-list-heading"><strong>Discussions</strong><span>${posts.length} topic${posts.length === 1 ? '' : 's'}</span></div>${discussions}</section>`;
+}
+
+async function renderGallery() {
+  messages.classList.remove('forum-view');
+  messages.classList.add('gallery-view');
+  messages.innerHTML = '<section class="gallery-hero"><span>MEDIA GALLERY</span><h2>Creator media</h2><p>Photos and videos shared by creators. This channel has no chat.</p></section><section class="gallery-grid"><p class="empty">Loading media…</p></section>';
+  try {
+    const result = await api('/api/content');
+    const items = result.items.filter(item => ['sfw_photo', 'nsfw_photo', 'video'].includes(item.kind));
+    const grid = messages.querySelector('.gallery-grid');
+    grid.innerHTML = items.length ? items.map(item => `<article class="gallery-card" data-media-id="${item.id}"><div class="gallery-visual ${item.kind}"><span>${item.kind === 'video' ? '▶' : '▦'}</span></div><div><strong>${esc(item.title)}</strong><small>${esc(item.performer_name)} · ${item.access_type}</small></div></article>`).join('') : '<div class="gallery-empty"><div>▦</div><h2>No media yet</h2><p>Creator uploads will appear here.</p></div>';
+    items.filter(item => item.mediaUrl).forEach(async item => {
+      try {
+        const response = await fetch(item.mediaUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) return;
+        const url = URL.createObjectURL(await response.blob());
+        const target = grid.querySelector(`[data-media-id="${item.id}"] .gallery-visual`);
+        if (target) target.innerHTML = item.kind === 'video' ? `<video src="${url}" muted preload="metadata"></video><span>▶</span>` : `<img src="${url}" alt="${esc(item.title)}">`;
+      } catch { /* A gallery card remains available without a preview. */ }
+    });
+  } catch (error) { messages.querySelector('.gallery-grid').innerHTML = `<p class="empty">${esc(error.message)}</p>`; }
 }
 
 function stopVoiceTest() {
@@ -196,11 +228,13 @@ function voiceDock(roomChannel, room) {
 
 async function open(selectedChannel) {
   channel = selectedChannel;
-  document.querySelector('#channelTitle').textContent = `${icons[channel.type] || '#'} ${channel.name}`;
+  const kind = channelKind(channel);
+  document.querySelector('#channelTitle').textContent = `${icons[kind] || '#'} ${channel.name}`;
   document.querySelector('#channelSubtitle').textContent = channel.description || community.name;
-  document.querySelector('#channelType').textContent = titles[channel.type];
+  document.querySelector('#channelType').textContent = titles[kind];
   if (['voice', 'auditorium'].includes(channel.type)) {
     form.hidden = true;
+    messages.classList.remove('forum-view', 'gallery-view');
     await api(`/api/channels/${channel.id}/join`, { method: 'POST' });
     const room = await api(`/api/channels/${channel.id}/participants`);
     document.querySelectorAll('[data-room-members]').forEach(node => node.remove());
@@ -216,9 +250,18 @@ async function open(selectedChannel) {
     messages.innerHTML = `<div class="empty"><strong>Joined ${titles[channel.type].toLowerCase()}</strong><br>You are now in this room.<br><br>Use the Voice Connected panel to disconnect.</div>`;
     return;
   }
+  if (kind === 'media') {
+    form.hidden = true;
+    await renderGallery();
+    return;
+  }
   form.hidden = false;
+  const input = document.querySelector('#messageInput');
+  const submit = form.querySelector('button');
+  input.placeholder = kind === 'forum' ? 'Write the opening message for a new topic…' : 'Message this channel';
+  submit.textContent = kind === 'forum' ? 'New Post' : 'Send';
   const result = await api(`/api/channels/${channel.id}/${channel.type === 'forum' ? 'forum-posts' : 'messages'}`);
-  render(channel.type === 'forum' ? result.posts : result.messages, channel.type === 'forum');
+  if (channel.type === 'forum') renderForum(result.posts); else render(result.messages);
 }
 
 async function saveOrder() {
@@ -311,7 +354,7 @@ function draw() {
     sidebar.channels.filter(item => item.category_id === categoryItem.id).sort((a, b) => a.position - b.position).forEach(channelItem => {
       const button = document.createElement('button');
       button.dataset.id = channelItem.id;
-      button.textContent = `${icons[channelItem.type]} ${channelItem.name}`;
+      button.textContent = `${icons[channelKind(channelItem)]} ${channelItem.name}`;
       button.onclick = () => { if (Date.now() >= suppressChannelClickUntil) open(channelItem); };
       attachChannelDrag(button, channelItem);
       button.oncontextmenu = event => canEdit() && contextMenu(event, [
@@ -335,11 +378,13 @@ document.querySelector('#channelModalCancel').onclick = () => channelModal.style
 channelModal.querySelector('form').onsubmit = async event => {
   event.preventDefault();
   const name = document.querySelector('#channelModalName').value.trim();
-  const type = document.querySelector('#channelModalType').value;
+  const selectedType = document.querySelector('#channelModalType').value;
+  const type = selectedType === 'media' ? 'text' : selectedType;
+  const displayMode = selectedType === 'media' ? 'gallery' : 'standard';
   const categoryId = Number(channelModal.dataset.category);
   if (!name) return;
   try {
-    await api(`/api/communities/${community.id}/channels`, { method: 'POST', body: JSON.stringify({ name, type, categoryId }) });
+    await api(`/api/communities/${community.id}/channels`, { method: 'POST', body: JSON.stringify({ name, type, displayMode, categoryId }) });
     channelModal.style.display = 'none';
     await select(community);
   } catch (error) { alert(error.message); }

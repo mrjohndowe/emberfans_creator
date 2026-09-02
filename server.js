@@ -89,6 +89,7 @@ db.exec(`
     community_id INTEGER NOT NULL REFERENCES communities(id),
     name TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'text' CHECK(type IN ('text', 'forum', 'voice', 'auditorium')),
+    display_mode TEXT NOT NULL DEFAULT 'standard',
     description TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (community_id, name)
@@ -155,6 +156,7 @@ if (!channelColumns.includes('type')) db.exec("ALTER TABLE channels ADD COLUMN t
 if (!channelColumns.includes('description')) db.exec("ALTER TABLE channels ADD COLUMN description TEXT NOT NULL DEFAULT ''");
 if (!channelColumns.includes('category_id')) db.exec('ALTER TABLE channels ADD COLUMN category_id INTEGER REFERENCES channel_categories(id)');
 if (!channelColumns.includes('position')) db.exec('ALTER TABLE channels ADD COLUMN position INTEGER NOT NULL DEFAULT 0');
+if (!channelColumns.includes('display_mode')) db.exec("ALTER TABLE channels ADD COLUMN display_mode TEXT NOT NULL DEFAULT 'standard'");
 db.prepare('SELECT id FROM communities').all().forEach(community => {
   let category = db.prepare('SELECT id FROM channel_categories WHERE community_id = ? ORDER BY position, id LIMIT 1').get(community.id);
   if (!category) {
@@ -364,13 +366,15 @@ app.post('/api/communities/:id/channels', authenticate, (request, response) => {
   if (!communityModerator(request.params.id, request.user)) return response.status(403).json({ error: 'Only community moderators can create channels.' });
   const name = String(request.body?.name || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/(^-|-$)/g, '');
   const type = String(request.body?.type || 'text');
+  const displayMode = String(request.body?.displayMode || 'standard');
   const description = String(request.body?.description || '').trim();
   if (name.length < 2 || name.length > 48) return response.status(400).json({ error: 'Channel names must be 2 to 48 lowercase characters.' });
   if (!['text', 'forum', 'voice', 'auditorium'].includes(type)) return response.status(400).json({ error: 'Choose a valid channel type.' });
+  if (!['standard', 'gallery'].includes(displayMode)) return response.status(400).json({ error: 'Choose a valid channel display mode.' });
   const categoryId = request.body?.categoryId ? Number(request.body.categoryId) : null;
   if (categoryId && !db.prepare('SELECT id FROM channel_categories WHERE id = ? AND community_id = ?').get(categoryId, request.params.id)) return response.status(400).json({ error: 'Choose a category in this community.' });
   const position = db.prepare('SELECT COALESCE(MAX(position), -1) AS value FROM channels WHERE community_id = ? AND category_id IS ?').get(request.params.id, categoryId).value + 1;
-  try { const result = db.prepare('INSERT INTO channels (community_id, name, type, description, category_id, position) VALUES (?, ?, ?, ?, ?, ?)').run(request.params.id, name, type, description.slice(0, 240), categoryId, position); const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(result.lastInsertRowid); communityAudit(request.params.id, request.user.id, 'channel_created', { channelId: channel.id, name: channel.name, type: channel.type, categoryId: channel.category_id }); response.status(201).json({ channel }); }
+  try { const result = db.prepare('INSERT INTO channels (community_id, name, type, display_mode, description, category_id, position) VALUES (?, ?, ?, ?, ?, ?, ?)').run(request.params.id, name, type, displayMode, description.slice(0, 240), categoryId, position); const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(result.lastInsertRowid); communityAudit(request.params.id, request.user.id, 'channel_created', { channelId: channel.id, name: channel.name, type: channel.type, displayMode: channel.display_mode, categoryId: channel.category_id }); response.status(201).json({ channel }); }
   catch (error) { if (String(error.message).includes('UNIQUE')) return response.status(409).json({ error: 'That channel already exists.' }); throw error; }
 });
 
