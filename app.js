@@ -126,6 +126,11 @@ $('#confirmUpgrade').addEventListener('click', () => { closeModal(); showToast('
 
 $('#newRoom').addEventListener('click', () => showToast('Creator room setup is available to verified performer accounts.'));
 $('#settings').addEventListener('click', () => showView('profile'));
+$('#logoutButton').addEventListener('click', () => {
+  sessionStorage.removeItem('emberfansToken');
+  sessionStorage.removeItem('emberfansUser');
+  window.location.assign('auth.html');
+});
 $('#searchRooms').addEventListener('input', event => {
   const query = event.target.value.toLowerCase();
   $$('.space').forEach(space => { space.style.display = space.textContent.toLowerCase().includes(query) ? '' : 'none'; });
