@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Join EmberFans</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>body{display:grid;min-height:100vh;place-items:center;padding:24px}.auth-card{width:min(440px,100%);padding:34px;background:#171925;border:1px solid #353746;border-radius:16px}.auth-logo{width:90px;height:auto;display:block;margin:0 auto 18px}.auth-card h1{text-align:center;margin:0;font-size:26px}.auth-card>p{text-align:center;color:#aaaab5;font-size:12px;line-height:1.6;margin:10px 0 26px}.auth-form{display:grid;gap:13px}.auth-form label{display:grid;gap:6px;color:#d7d6df;font-size:11px;font-weight:700}.auth-form input{width:100%;padding:11px;border:1px solid #393b4b;border-radius:8px;background:#10111a;color:#fff;font:12px Manrope}.auth-check{display:flex!important;grid-template-columns:16px 1fr;align-items:start;line-height:1.5;color:#a9aab5!important;font-size:10px!important}.auth-check input{width:14px;height:14px;margin:0}.auth-form .primary-button{margin-top:4px}.auth-message{min-height:18px;margin:13px 0 0;text-align:center;font-size:11px;color:#ffaaa2}.auth-switch{text-align:center;color:#a6a7b1;font-size:11px;margin:16px 0 0}.auth-switch button{border:0;background:transparent;color:#ff9d93;font:700 11px Manrope;cursor:pointer}</style>
+  </head>
+  <body>
+    <main class="auth-card"><a href="index.html"><img class="auth-logo" src="assets/emberfans-logo.png" alt="EmberFans" /></a><h1 id="formTitle">Create your account</h1><p id="formSubtitle">Join verified creator communities. You must be 18 or older.</p><form class="auth-form" id="authForm"><label>Display name<input id="displayName" autocomplete="nickname" maxlength="48" required /></label><label>Email<input id="email" type="email" autocomplete="email" required /></label><label>Password<input id="password" type="password" autocomplete="new-password" minlength="12" required /></label><label class="auth-check signup-only"><input id="confirmAdult" type="checkbox" required />I confirm that I am at least 18 years old.</label><label class="auth-check signup-only"><input id="acceptTerms" type="checkbox" required />I accept the Terms of Service and Community Standards.</label><button class="primary-button" type="submit" id="submitButton">Create account <span>&#8594;</span></button></form><p class="auth-message" id="authMessage" role="status"></p><p class="auth-switch"><span id="switchPrompt">Already have an account?</span> <button type="button" id="switchMode">Sign in</button></p></main><script src="auth.js"></script>
+  </body>
+</html>
