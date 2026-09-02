@@ -18,6 +18,11 @@ channelModal.style.cssText = 'display:none;position:fixed;inset:0;z-index:30;pla
 channelModal.innerHTML = '<form style="width:min(380px,calc(100% - 30px));padding:24px;background:#20212a;border:1px solid #40424e;border-radius:10px;display:grid;gap:14px"><strong id="channelModalTitle" style="font-size:18px">Create Channel</strong><label style="display:grid;gap:6px;font-size:11px">Channel name<input id="channelModalName" maxlength="48" required style="padding:10px;border:1px solid #444651;border-radius:6px;background:#13141b;color:#fff"></label><label style="display:grid;gap:6px;font-size:11px">Channel type<select id="channelModalType" style="padding:10px;border:1px solid #444651;border-radius:6px;background:#13141b;color:#fff"><option value="text">Text channel</option><option value="forum">Forum channel</option><option value="voice">Voice channel</option><option value="auditorium">Auditorium</option></select></label><div style="display:flex;justify-content:end;gap:8px"><button type="button" id="channelModalCancel" class="secondary-button">Cancel</button><button class="primary-button">Create channel</button></div></form>';
 document.body.append(channelModal);
 
+const settingsModal = document.createElement('div');
+settingsModal.className = 'settings-modal';
+settingsModal.innerHTML = '<section class="settings-card"><nav class="settings-nav"><strong>Administration</strong><button class="active" data-settings-view="overview">Overview</button><button data-settings-view="audit">Audit Log</button><button data-settings-view="roles">Roles & Permissions</button><button data-settings-view="moderation">Moderation</button><button data-settings-view="integrations">Integrations</button></nav><main class="settings-main"><button class="settings-close" aria-label="Close administration settings">×</button><div id="settingsContent"></div></main></section>';
+document.body.append(settingsModal);
+
 async function api(url, options = {}) {
   const response = await fetch(url, { ...options, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) } });
   const isJson = response.headers.get('content-type')?.includes('application/json');
@@ -38,6 +43,35 @@ function esc(value) {
 function canEdit() {
   return user && (['owner', 'moderator'].includes(community?.member_role) || user.role === 'admin');
 }
+
+function auditDescription(entry) {
+  const details = entry.details || {};
+  if (entry.action === 'channel_created') return `Created #${details.name || 'channel'} (${details.type || 'channel'}).`;
+  if (entry.action === 'channel_deleted') return `Deleted #${details.name || 'channel'} (${details.type || 'channel'}).`;
+  if (entry.action === 'category_created') return `Created the ${details.name || 'unnamed'} category.`;
+  if (entry.action === 'category_deleted') return `Deleted the ${details.name || 'unnamed'} category and moved ${details.movedChannelCount || 0} channel${details.movedChannelCount === 1 ? '' : 's'} to ${details.fallbackCategory || 'another category'}.`;
+  return entry.action.replaceAll('_', ' ');
+}
+
+async function showAdministration(view = 'overview') {
+  settingsModal.style.display = 'grid';
+  settingsModal.querySelectorAll('[data-settings-view]').forEach(button => button.classList.toggle('active', button.dataset.settingsView === view));
+  const content = settingsModal.querySelector('#settingsContent');
+  if (view !== 'audit') {
+    const headings = { overview: 'Community Administration', roles: 'Roles & Permissions', moderation: 'Moderation', integrations: 'Integrations' };
+    const notes = { overview: 'Manage the community configuration and review recorded administrative activity.', roles: 'Role management will appear here. It is not enabled yet.', moderation: 'Moderation controls will appear here. It is not enabled yet.', integrations: 'Approved integrations will appear here. It is not enabled yet.' };
+    content.innerHTML = `<h2>${headings[view]}</h2><p>${notes[view]}</p>`;
+    return;
+  }
+  content.innerHTML = '<h2>Audit Log</h2><p>Read-only activity history. Entries cannot be edited or deleted from this screen.</p><p>Loading activity…</p>';
+  try {
+    const result = await api(`/api/communities/${community.id}/audit-log`);
+    content.innerHTML = `<h2>Audit Log</h2><p>Read-only activity history. Entries cannot be edited or deleted from this screen.</p>${result.entries.length ? result.entries.map(entry => `<article class="audit-entry"><strong>${esc(entry.actor.username)} — ${esc(auditDescription(entry))}</strong><small>${new Date(entry.createdAt).toLocaleString()}</small></article>`).join('') : '<p>No administrative activity has been recorded yet.</p>'}`;
+  } catch (error) { content.innerHTML = `<h2>Audit Log</h2><p>${esc(error.message)}</p>`; }
+}
+
+settingsModal.querySelector('.settings-close').onclick = () => settingsModal.style.display = 'none';
+settingsModal.querySelectorAll('[data-settings-view]').forEach(button => button.onclick = () => showAdministration(button.dataset.settingsView));
 
 function contextMenu(event, items) {
   event.preventDefault();
@@ -212,6 +246,16 @@ function attachChannelDrag(button, selectedChannel) {
 
 function draw() {
   channels.innerHTML = '';
+  const administration = document.querySelector('#communityAdmin');
+  administration.innerHTML = '';
+  if (canEdit()) {
+    const cog = document.createElement('button');
+    cog.className = 'admin-cog';
+    cog.style.display = 'block';
+    cog.innerHTML = `Administration <span aria-hidden="true">⚙</span>`;
+    cog.onclick = () => showAdministration();
+    administration.append(cog);
+  }
   sidebar.categories.forEach(categoryItem => {
     const section = document.createElement('section');
     section.dataset.category = categoryItem.id;

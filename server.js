@@ -301,13 +301,24 @@ app.get('/api/communities/:id/channels', authenticate, (request, response) => {
   response.json({ categories: db.prepare('SELECT * FROM channel_categories WHERE community_id = ? ORDER BY position, id').all(request.params.id), channels: db.prepare('SELECT * FROM channels WHERE community_id = ? ORDER BY category_id, position, id').all(request.params.id) });
 });
 
+app.get('/api/communities/:id/audit-log', authenticate, (request, response) => {
+  if (!communityModerator(request.params.id, request.user)) return response.status(403).json({ error: 'Only community moderators can view the audit log.' });
+  const entries = db.prepare(`SELECT community_audit_log.*, users.display_name, users.role
+    FROM community_audit_log JOIN users ON users.id = community_audit_log.actor_id
+    WHERE community_audit_log.community_id = ? ORDER BY community_audit_log.id DESC LIMIT 250`).all(request.params.id)
+    .map(entry => ({ id: entry.id, action: entry.action, details: JSON.parse(entry.details), createdAt: entry.created_at, actor: { id: entry.actor_id, username: entry.display_name, role: entry.role } }));
+  response.json({ entries });
+});
+
 app.post('/api/communities/:id/categories', authenticate, (request, response) => {
   if (!communityModerator(request.params.id, request.user)) return response.status(403).json({ error: 'Only community moderators can create categories.' });
   const name = String(request.body?.name || '').trim().toUpperCase();
   if (name.length < 2 || name.length > 48) return response.status(400).json({ error: 'Category names must be 2 to 48 characters.' });
   const position = db.prepare('SELECT COALESCE(MAX(position), -1) AS value FROM channel_categories WHERE community_id = ?').get(request.params.id).value + 1;
   const result = db.prepare('INSERT INTO channel_categories (community_id, name, position) VALUES (?, ?, ?)').run(request.params.id, name, position);
-  response.status(201).json({ category: db.prepare('SELECT * FROM channel_categories WHERE id = ?').get(result.lastInsertRowid) });
+  const category = db.prepare('SELECT * FROM channel_categories WHERE id = ?').get(result.lastInsertRowid);
+  communityAudit(request.params.id, request.user.id, 'category_created', { categoryId: category.id, name: category.name });
+  response.status(201).json({ category });
 });
 
 app.delete('/api/communities/:communityId/categories/:categoryId', authenticate, (request, response) => {
@@ -328,6 +339,7 @@ app.delete('/api/communities/:communityId/categories/:categoryId', authenticate,
     movedChannels.forEach(item => moveChannel.run(fallback.id, nextPosition++, item.id));
     db.prepare('DELETE FROM channel_categories WHERE id = ?').run(categoryId);
     db.prepare('SELECT id FROM channel_categories WHERE community_id = ? ORDER BY position, id').all(communityId).forEach((item, position) => db.prepare('UPDATE channel_categories SET position = ? WHERE id = ?').run(position, item.id));
+    communityAudit(communityId, request.user.id, 'category_deleted', { categoryId: category.id, name: category.name, fallbackCategory: fallback.name, movedChannelCount: movedChannels.length });
     return { fallbackCategory: fallback.name, movedChannelCount: movedChannels.length };
   })();
   response.json(result);
@@ -356,7 +368,7 @@ app.post('/api/communities/:id/channels', authenticate, (request, response) => {
   const categoryId = request.body?.categoryId ? Number(request.body.categoryId) : null;
   if (categoryId && !db.prepare('SELECT id FROM channel_categories WHERE id = ? AND community_id = ?').get(categoryId, request.params.id)) return response.status(400).json({ error: 'Choose a category in this community.' });
   const position = db.prepare('SELECT COALESCE(MAX(position), -1) AS value FROM channels WHERE community_id = ? AND category_id IS ?').get(request.params.id, categoryId).value + 1;
-  try { const result = db.prepare('INSERT INTO channels (community_id, name, type, description, category_id, position) VALUES (?, ?, ?, ?, ?, ?)').run(request.params.id, name, type, description.slice(0, 240), categoryId, position); response.status(201).json({ channel: db.prepare('SELECT * FROM channels WHERE id = ?').get(result.lastInsertRowid) }); }
+  try { const result = db.prepare('INSERT INTO channels (community_id, name, type, description, category_id, position) VALUES (?, ?, ?, ?, ?, ?)').run(request.params.id, name, type, description.slice(0, 240), categoryId, position); const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(result.lastInsertRowid); communityAudit(request.params.id, request.user.id, 'channel_created', { channelId: channel.id, name: channel.name, type: channel.type, categoryId: channel.category_id }); response.status(201).json({ channel }); }
   catch (error) { if (String(error.message).includes('UNIQUE')) return response.status(409).json({ error: 'That channel already exists.' }); throw error; }
 });
 
@@ -369,6 +381,7 @@ app.delete('/api/channels/:id', authenticate, (request, response) => {
     db.prepare('DELETE FROM channel_messages WHERE channel_id = ?').run(channel.id);
     db.prepare('DELETE FROM forum_posts WHERE channel_id = ?').run(channel.id);
     db.prepare('DELETE FROM channels WHERE id = ?').run(channel.id);
+    communityAudit(channel.community_id, request.user.id, 'channel_deleted', { channelId: channel.id, name: channel.name, type: channel.type });
   })();
   response.sendStatus(204);
 });
