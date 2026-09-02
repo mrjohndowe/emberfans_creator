@@ -312,6 +312,10 @@ async function renderGallery() {
     grid.innerHTML = items.length ? items.map(item => `<article class="gallery-card" data-media-id="${item.id}"><div class="gallery-visual ${item.kind}"><span>${item.kind === 'video' ? '▶' : '▦'}</span></div><div><strong>${esc(item.title)}</strong><small>${esc(item.performer_name)} · ${item.access_type}</small>${canManageMedia(item) ? `<button class="gallery-delete" data-media-delete-id="${item.id}">Delete</button>` : ''}</div></article>`).join('') : '<div class="gallery-empty"><div>▦</div><h2>No media yet</h2><p>Creator uploads will appear here.</p></div>';
     items.forEach(item => {
       grid.querySelector(`[data-media-id="${item.id}"]`)?.addEventListener('click', event => { if (!event.target.closest('.gallery-delete')) openMediaViewer(item); });
+      grid.querySelector(`[data-media-id="${item.id}"]`)?.addEventListener('contextmenu', event => contextMenu(event, [
+        { label: 'Open Media', action: () => openMediaViewer(item) },
+        ...(canManageMedia(item) ? [{ label: 'Delete Media', danger: true, action: () => deleteMediaItem(item) }] : [])
+      ]));
       grid.querySelector(`[data-media-delete-id="${item.id}"]`)?.addEventListener('click', () => deleteMediaItem(item));
     });
     items.filter(item => item.mediaUrl).forEach(async item => {
@@ -512,9 +516,21 @@ function draw() {
   });
 }
 
-document.querySelector('.community-side').addEventListener('contextmenu', event => {
-  if (event.target.closest('#channelList button,#channelList h2')) return;
-  if (canEdit() && sidebar?.categories?.length) contextMenu(event, categoryActions(sidebar.categories[0]));
+document.addEventListener('contextmenu', event => {
+  if (event.defaultPrevented) return;
+  if (event.target.closest('.community-side') && canEdit() && sidebar?.categories?.length) {
+    contextMenu(event, categoryActions(sidebar.categories[0]));
+    return;
+  }
+  if (event.target.matches('input,textarea')) {
+    contextMenu(event, [{ label: 'Select All', action: () => event.target.select?.() }]);
+    return;
+  }
+  contextMenu(event, [
+    ...(channel ? [{ label: 'Refresh Current Channel', action: () => open(channel) }] : []),
+    ...(canEdit() ? [{ label: 'Administration', action: () => showAdministration() }] : []),
+    { label: 'Dashboard', action: () => location.assign('index.html') }
+  ]);
 });
 
 document.querySelector('#channelModalCancel').onclick = () => channelModal.style.display = 'none';
