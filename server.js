@@ -85,6 +85,14 @@ db.exec(`
     joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (community_id, user_id)
   );
+  CREATE TABLE IF NOT EXISTS community_member_roles (
+    community_id INTEGER NOT NULL REFERENCES communities(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    role TEXT NOT NULL CHECK(role IN ('administrator', 'moderator', 'creator', 'subscriber', 'member')),
+    assigned_by INTEGER NOT NULL REFERENCES users(id),
+    assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (community_id, user_id)
+  );
   CREATE TABLE IF NOT EXISTS channels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     community_id INTEGER NOT NULL REFERENCES communities(id),
@@ -233,9 +241,23 @@ function communityMembership(communityId, userId) {
   return db.prepare('SELECT * FROM community_members WHERE community_id = ? AND user_id = ?').get(communityId, userId);
 }
 
+function communityRole(communityId, userId) {
+  const membership = communityMembership(communityId, userId);
+  if (!membership) return null;
+  return db.prepare('SELECT role FROM community_member_roles WHERE community_id = ? AND user_id = ?').get(communityId, userId)?.role || membership.role;
+}
+
 function communityModerator(communityId, user) {
-  const membership = communityMembership(communityId, user.id);
-  return user.role === 'admin' || membership?.role === 'owner' || membership?.role === 'moderator';
+  const role = communityRole(communityId, user.id);
+  return user.role === 'admin' || ['owner', 'administrator', 'moderator'].includes(role);
+}
+
+function communityRoleManager(communityId, user) {
+  return user.role === 'admin' || communityRole(communityId, user.id) === 'owner';
+}
+
+function communityCreator(communityId, user) {
+  return ['admin', 'performer'].includes(user.role) || ['owner', 'administrator', 'moderator', 'creator'].includes(communityRole(communityId, user.id));
 }
 
 function communityAudit(communityId, actorId, action, details = {}) {
@@ -277,7 +299,7 @@ app.post('/api/auth/login', authLimiter, (request, response) => {
 app.get('/api/me', authenticate, (request, response) => response.json({ user: publicUser(request.user) }));
 
 app.get('/api/communities', authenticate, (request, response) => {
-  const communities = db.prepare(`SELECT communities.*, community_members.role AS member_role, (SELECT count(*) FROM community_members WHERE community_id = communities.id) AS member_count FROM communities JOIN community_members ON community_members.community_id = communities.id WHERE community_members.user_id = ? ORDER BY communities.name`).all(request.user.id);
+  const communities = db.prepare(`SELECT communities.*, COALESCE(community_member_roles.role, community_members.role) AS member_role, (SELECT count(*) FROM community_members WHERE community_id = communities.id) AS member_count FROM communities JOIN community_members ON community_members.community_id = communities.id LEFT JOIN community_member_roles ON community_member_roles.community_id = community_members.community_id AND community_member_roles.user_id = community_members.user_id WHERE community_members.user_id = ? ORDER BY communities.name`).all(request.user.id);
   response.json({ communities });
 });
 
@@ -320,6 +342,30 @@ app.get('/api/communities/:id/audit-log', authenticate, (request, response) => {
     WHERE community_audit_log.community_id = ? ORDER BY community_audit_log.id DESC LIMIT 250`).all(request.params.id)
     .map(entry => ({ id: entry.id, action: entry.action, details: JSON.parse(entry.details), createdAt: entry.created_at, actor: { id: entry.actor_id, username: entry.display_name, role: entry.role } }));
   response.json({ entries });
+});
+
+app.get('/api/communities/:id/members', authenticate, (request, response) => {
+  if (!communityModerator(request.params.id, request.user)) return response.status(403).json({ error: 'Only community moderators can view member roles.' });
+  const members = db.prepare(`SELECT users.id, users.display_name, users.role AS account_role, community_members.role AS membership_role, COALESCE(community_member_roles.role, community_members.role) AS community_role
+    FROM community_members JOIN users ON users.id = community_members.user_id
+    LEFT JOIN community_member_roles ON community_member_roles.community_id = community_members.community_id AND community_member_roles.user_id = community_members.user_id
+    WHERE community_members.community_id = ? ORDER BY CASE WHEN community_members.role = 'owner' THEN 0 ELSE 1 END, users.display_name COLLATE NOCASE`).all(request.params.id);
+  response.json({ members, canManageRoles: communityRoleManager(request.params.id, request.user) });
+});
+
+app.put('/api/communities/:id/members/:userId/role', authenticate, (request, response) => {
+  if (!communityRoleManager(request.params.id, request.user)) return response.status(403).json({ error: 'Only the community owner or an administrator can assign roles.' });
+  const member = communityMembership(request.params.id, request.params.userId);
+  const role = String(request.body?.role || '');
+  if (!member) return response.status(404).json({ error: 'Community member was not found.' });
+  if (member.role === 'owner') return response.status(400).json({ error: 'The community owner role cannot be changed here.' });
+  if (!['administrator', 'moderator', 'creator', 'subscriber', 'member'].includes(role)) return response.status(400).json({ error: 'Choose a valid community role.' });
+  db.transaction(() => {
+    if (role === 'member') db.prepare('DELETE FROM community_member_roles WHERE community_id = ? AND user_id = ?').run(request.params.id, member.user_id);
+    else db.prepare('INSERT INTO community_member_roles (community_id, user_id, role, assigned_by) VALUES (?, ?, ?, ?) ON CONFLICT(community_id, user_id) DO UPDATE SET role = excluded.role, assigned_by = excluded.assigned_by, assigned_at = CURRENT_TIMESTAMP').run(request.params.id, member.user_id, role, request.user.id);
+    communityAudit(request.params.id, request.user.id, 'member_role_changed', { memberId: member.user_id, role });
+  })();
+  response.json({ role });
 });
 
 app.post('/api/communities/:id/categories', authenticate, (request, response) => {
@@ -566,7 +612,7 @@ app.get('/api/content', authenticate, (request, response) => {
   response.json({ items });
 });
 
-app.post('/api/content', authenticate, requireRole('performer', 'admin'), (request, response) => {
+app.post('/api/content', authenticate, (request, response) => {
   const { title, summary = '', kind, accessType, channelId } = request.body || {};
   const validKinds = ['sfw_photo', 'nsfw_photo', 'video', 'live_event'];
   const validAccessTypes = ['free', 'subscriber', 'purchase'];
@@ -575,16 +621,18 @@ app.post('/api/content', authenticate, requireRole('performer', 'admin'), (reque
   const mediaChannelId = channelId ? Number(channelId) : null;
   if (mediaChannelId) {
     const mediaChannel = db.prepare('SELECT * FROM channels WHERE id = ?').get(mediaChannelId);
-    if (!mediaChannel || mediaChannel.display_mode !== 'gallery' || !communityModerator(mediaChannel.community_id, request.user)) return response.status(403).json({ error: 'Only community moderators can upload to this media channel.' });
+    if (!mediaChannel || mediaChannel.display_mode !== 'gallery' || !communityCreator(mediaChannel.community_id, request.user)) return response.status(403).json({ error: 'Only community creators, moderators, or administrators can upload to this media channel.' });
+  } else if (!['performer', 'admin'].includes(request.user.role)) {
+    return response.status(403).json({ error: 'Only performers or administrators can create media outside a community gallery.' });
   }
   const result = db.prepare('INSERT INTO content_items (performer_id, channel_id, title, summary, kind, access_type, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(request.user.id, mediaChannelId, title.trim(), String(summary).trim(), kind, accessType, new Date().toISOString());
   response.status(201).json({ item: db.prepare('SELECT * FROM content_items WHERE id = ?').get(result.lastInsertRowid) });
 });
 
-app.post('/api/content/:id/media', authenticate, requireRole('performer', 'admin'), upload.single('media'), (request, response) => {
+app.post('/api/content/:id/media', authenticate, upload.single('media'), (request, response) => {
   const item = db.prepare('SELECT * FROM content_items WHERE id = ?').get(request.params.id);
   if (!item) return response.status(404).json({ error: 'Content item was not found.' });
-  if (request.user.role !== 'admin' && item.performer_id !== request.user.id) return response.status(403).json({ error: 'Only the performer who created this item can upload media.' });
+  if (request.user.role !== 'admin' && item.performer_id !== request.user.id) return response.status(403).json({ error: 'Only the creator who made this item can upload media.' });
   if (!request.file) return response.status(400).json({ error: 'Select a supported image or video file.' });
   if (item.media_path) fs.rmSync(path.join(mediaDirectory, item.media_path), { force: true });
   db.prepare('UPDATE content_items SET media_path = ?, media_mime_type = ? WHERE id = ?').run(request.file.filename, request.file.mimetype, item.id);
@@ -595,7 +643,7 @@ app.post('/api/content/:id/media', authenticate, requireRole('performer', 'admin
   response.status(201).json({ itemId: item.id, uploaded: true });
 });
 
-app.delete('/api/content/:id', authenticate, requireRole('performer', 'admin'), (request, response) => {
+app.delete('/api/content/:id', authenticate, (request, response) => {
   const item = db.prepare('SELECT * FROM content_items WHERE id = ?').get(request.params.id);
   if (!item) return response.status(404).json({ error: 'Media item was not found.' });
   if (request.user.role !== 'admin' && item.performer_id !== request.user.id) return response.status(403).json({ error: 'Only the performer who created this media can delete it.' });

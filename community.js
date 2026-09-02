@@ -58,7 +58,11 @@ function esc(value) {
 }
 
 function canEdit() {
-  return user && (['owner', 'moderator'].includes(community?.member_role) || user.role === 'admin');
+  return user && (['owner', 'administrator', 'moderator'].includes(community?.member_role) || user.role === 'admin');
+}
+
+function canUploadToMedia() {
+  return user && (['admin', 'performer'].includes(user.role) || ['owner', 'administrator', 'moderator', 'creator'].includes(community?.member_role));
 }
 
 function channelKind(channelItem) {
@@ -100,6 +104,7 @@ function auditDescription(entry) {
   if (entry.action === 'forum_post_removed') return `Removed a forum thread in channel ${details.channelId || 'unknown'}.`;
   if (entry.action === 'forum_reply_removed') return `Removed a forum reply in channel ${details.channelId || 'unknown'}.`;
   if (entry.action === 'media_uploaded') return `Uploaded media item ${details.title || 'unknown'}.`;
+  if (entry.action === 'member_role_changed') return `Changed a member role to ${details.role || 'member'}.`;
   if (entry.action === 'media_deleted') return `Deleted media item ${details.title || 'unknown'}.`;
   return entry.action.replaceAll('_', ' ');
 }
@@ -108,6 +113,20 @@ async function showAdministration(view = 'overview') {
   settingsModal.style.display = 'grid';
   settingsModal.querySelectorAll('[data-settings-view]').forEach(button => button.classList.toggle('active', button.dataset.settingsView === view));
   const content = settingsModal.querySelector('#settingsContent');
+  if (view === 'roles') {
+    content.innerHTML = '<h2>Roles & Permissions</h2><p>Loading community members…</p>';
+    try {
+      const result = await api(`/api/communities/${community.id}/members`);
+      const permissions = '<section class="role-permissions"><strong>Role permissions</strong><p><b>Owner</b> — full control, including role assignment.</p><p><b>Administrator</b> — manage channels, categories, content, and moderation.</p><p><b>Moderator</b> — manage channels, categories, and moderation.</p><p><b>Creator</b> — upload to Media channels.</p><p><b>Subscriber</b> / <b>Member</b> — standard community participation.</p></section>';
+      const members = result.members.map(member => `<article class="role-member"><span class="avatar">${esc(member.display_name.slice(0, 2))}</span><div><strong>${esc(member.display_name)}</strong><small>${esc(member.account_role)} account</small></div>${member.membership_role === 'owner' ? '<b class="role-owner">Owner</b>' : result.canManageRoles ? `<select data-role-member="${member.id}"><option value="administrator" ${member.community_role === 'administrator' ? 'selected' : ''}>Administrator</option><option value="moderator" ${member.community_role === 'moderator' ? 'selected' : ''}>Moderator</option><option value="creator" ${member.community_role === 'creator' ? 'selected' : ''}>Creator</option><option value="subscriber" ${member.community_role === 'subscriber' ? 'selected' : ''}>Subscriber</option><option value="member" ${member.community_role === 'member' ? 'selected' : ''}>Member</option></select>` : `<b class="role-owner">${esc(member.community_role)}</b>`}</article>`).join('');
+      content.innerHTML = `<h2>Roles & Permissions</h2><p>${result.canManageRoles ? 'Choose a role for each member. The owner cannot be changed here.' : 'You can review roles, but only the owner or a global administrator can change them.'}</p>${permissions}<section class="role-members">${members || '<p>No members found.</p>'}</section>`;
+      content.querySelectorAll('[data-role-member]').forEach(select => select.onchange = async () => {
+        try { await api(`/api/communities/${community.id}/members/${select.dataset.roleMember}/role`, { method: 'PUT', body: JSON.stringify({ role: select.value }) }); await showAdministration('roles'); }
+        catch (error) { alert(error.message); await showAdministration('roles'); }
+      });
+    } catch (error) { content.innerHTML = `<h2>Roles & Permissions</h2><p>${esc(error.message)}</p>`; }
+    return;
+  }
   if (view !== 'audit') {
     const headings = { overview: 'Community Administration', roles: 'Roles & Permissions', moderation: 'Moderation', integrations: 'Integrations' };
     const notes = { overview: 'Manage the community configuration and review recorded administrative activity.', roles: 'Role management will appear here. It is not enabled yet.', moderation: 'Moderation controls will appear here. It is not enabled yet.', integrations: 'Approved integrations will appear here. It is not enabled yet.' };
@@ -284,7 +303,7 @@ function renderForum(posts) {
 async function renderGallery() {
   messages.classList.remove('forum-view');
   messages.classList.add('gallery-view');
-  messages.innerHTML = `<section class="gallery-hero"><span>MEDIA GALLERY</span><h2>Creator media</h2><p>Photos, videos, and GIFs shared by creators. This channel has no chat.</p>${(['performer', 'admin'].includes(user?.role) && canEdit()) ? '<button id="uploadMediaButton" class="gallery-upload">Upload media</button>' : ''}</section><section class="gallery-grid"><p class="empty">Loading media…</p></section>`;
+  messages.innerHTML = `<section class="gallery-hero"><span>MEDIA GALLERY</span><h2>Creator media</h2><p>Photos, videos, and GIFs shared by creators. This channel has no chat.</p>${canUploadToMedia() ? '<button id="uploadMediaButton" class="gallery-upload">Upload media</button>' : ''}</section><section class="gallery-grid"><p class="empty">Loading media…</p></section>`;
   messages.querySelector('#uploadMediaButton')?.addEventListener('click', () => { mediaUploadModal.style.display = 'grid'; document.querySelector('#mediaUploadTitle').focus(); });
   try {
     const result = await api(`/api/content?channelId=${channel.id}`);
