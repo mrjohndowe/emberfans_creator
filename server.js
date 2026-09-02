@@ -325,6 +325,19 @@ app.post('/api/communities/:id/channels', authenticate, (request, response) => {
   catch (error) { if (String(error.message).includes('UNIQUE')) return response.status(409).json({ error: 'That channel already exists.' }); throw error; }
 });
 
+app.delete('/api/channels/:id', authenticate, (request, response) => {
+  const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
+  if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
+  if (!communityModerator(channel.community_id, request.user)) return response.status(403).json({ error: 'Only community moderators can delete channels.' });
+  db.transaction(() => {
+    db.prepare('DELETE FROM live_channel_participants WHERE channel_id = ?').run(channel.id);
+    db.prepare('DELETE FROM channel_messages WHERE channel_id = ?').run(channel.id);
+    db.prepare('DELETE FROM forum_posts WHERE channel_id = ?').run(channel.id);
+    db.prepare('DELETE FROM channels WHERE id = ?').run(channel.id);
+  })();
+  response.sendStatus(204);
+});
+
 app.get('/api/channels/:id/messages', authenticate, (request, response) => {
   const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
   if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
