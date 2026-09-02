@@ -5,7 +5,11 @@ let toastTimer;
 
 async function hydrateSignedInUser() {
   const token = sessionStorage.getItem('emberfansToken');
-  if (!token || location.hostname.endsWith('github.io')) return;
+  if (location.hostname.endsWith('github.io')) return;
+  if (!token) {
+    window.location.replace('auth.html');
+    return;
+  }
   try {
     const response = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
     if (!response.ok) throw new Error('expired');
@@ -26,6 +30,7 @@ async function hydrateSignedInUser() {
 }
 
 hydrateSignedInUser();
+window.addEventListener('pageshow', hydrateSignedInUser);
 
 function showToast(message) {
   toast.textContent = message;
