@@ -185,14 +185,18 @@ app.post('/api/content/:id/media', authenticate, requireRole('performer', 'admin
   response.status(201).json({ itemId: item.id, uploaded: true });
 });
 
-app.get('/api/media/:contentId', authenticate, (request, response) => {
+app.get('/api/media/:contentId', authenticate, (request, response, next) => {
   const item = db.prepare('SELECT * FROM content_items WHERE id = ?').get(request.params.contentId);
   if (!item || !item.media_path) return response.status(404).json({ error: 'Media was not found.' });
   if (!hasContentAccess(request.user.id, item) && request.user.id !== item.performer_id && request.user.role !== 'admin') return response.status(403).json({ error: 'This media requires an active entitlement.' });
+  const mediaPath = path.resolve(mediaDirectory, item.media_path);
+  if (!mediaPath.startsWith(`${mediaDirectory}${path.sep}`) || !fs.existsSync(mediaPath)) return response.status(404).json({ error: 'Media was not found.' });
   response.setHeader('Cache-Control', 'private, no-store');
   response.setHeader('Content-Disposition', 'inline');
-  response.type(item.media_mime_type);
-  response.sendFile(path.join(mediaDirectory, item.media_path));
+  response.setHeader('Content-Type', item.media_mime_type);
+  const stream = fs.createReadStream(mediaPath);
+  stream.on('error', next);
+  stream.pipe(response);
 });
 
 app.post('/api/device-sessions/:id/stop', authenticate, (request, response) => {
