@@ -11,7 +11,12 @@ function setMode(login) {
   document.querySelector('#switchPrompt').textContent = login ? 'New to EmberFans?' : 'Already have an account?';
   switchMode.textContent = login ? 'Create an account' : 'Sign in';
   document.querySelectorAll('.signup-only').forEach(item => item.hidden = login);
+  document.querySelectorAll('.login-only').forEach(item => item.hidden = !login);
   document.querySelector('#displayName').required = !login;
+  document.querySelector('#email').required = !login;
+  document.querySelector('#username').required = login;
+  document.querySelector('#confirmAdult').required = !login;
+  document.querySelector('#acceptTerms').required = !login;
   document.querySelector('#password').autocomplete = login ? 'current-password' : 'new-password';
   message.textContent = '';
 }
@@ -20,8 +25,9 @@ switchMode.addEventListener('click', () => setMode(!isLogin));
 form.addEventListener('submit', async event => {
   event.preventDefault();
   message.textContent = '';
-  const body = { email: document.querySelector('#email').value, password: document.querySelector('#password').value };
-  if (!isLogin) Object.assign(body, { displayName: document.querySelector('#displayName').value, confirmAdult: document.querySelector('#confirmAdult').checked, acceptTerms: document.querySelector('#acceptTerms').checked });
+  const body = { password: document.querySelector('#password').value };
+  if (isLogin) Object.assign(body, { username: document.querySelector('#username').value });
+  else Object.assign(body, { email: document.querySelector('#email').value, displayName: document.querySelector('#displayName').value, confirmAdult: document.querySelector('#confirmAdult').checked, acceptTerms: document.querySelector('#acceptTerms').checked });
   const response = await fetch(isLogin ? '/api/auth/login' : '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const result = await response.json();
   if (!response.ok) { message.textContent = result.error || 'Please try again.'; return; }

@@ -70,6 +70,7 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `);
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_display_name_unique ON users(display_name COLLATE NOCASE)');
 
 const contentColumns = db.prepare('PRAGMA table_info(content_items)').all().map(column => column.name);
 if (!contentColumns.includes('media_path')) db.exec('ALTER TABLE content_items ADD COLUMN media_path TEXT');
@@ -151,9 +152,9 @@ app.post('/api/auth/register', authLimiter, (request, response) => {
 });
 
 app.post('/api/auth/login', authLimiter, (request, response) => {
-  const { email, password } = request.body || {};
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email || '').trim().toLowerCase());
-  if (!user || !bcrypt.compareSync(String(password || ''), user.password_hash)) return response.status(401).json({ error: 'Email or password is incorrect.' });
+  const { username, password } = request.body || {};
+  const user = db.prepare('SELECT * FROM users WHERE display_name = ? COLLATE NOCASE').get(String(username || '').trim());
+  if (!user || !bcrypt.compareSync(String(password || ''), user.password_hash)) return response.status(401).json({ error: 'Username or password is incorrect.' });
   return response.json({ token: createToken(user), user: publicUser(user) });
 });
 
