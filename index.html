@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a0b12" />
+    <title>EmberFans — Creator rooms, live and on your terms</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+    <div class="app-shell">
+      <aside class="rail" aria-label="Primary navigation">
+        <a class="brand" href="#home" aria-label="EmberFans home"><span class="brand-mark">E</span></a>
+        <nav class="rail-nav">
+          <button class="rail-button active" data-view="home" title="Home"><span>⌂</span></button>
+          <button class="rail-button" data-view="discover" title="Discover"><span>◈</span></button>
+          <button class="rail-button" data-view="library" title="Library"><span>▦</span></button>
+        </nav>
+        <button class="rail-button profile-button" data-view="profile" title="Profile"><span class="avatar tiny">JD</span></button>
+      </aside>
+
+      <aside class="sidebar">
+        <div class="sidebar-top"><a class="wordmark" href="#home">EMBER<span>FANS</span></a><button class="icon-button" id="newRoom" aria-label="Create room">＋</button></div>
+        <div class="search"><span>⌕</span><input id="searchRooms" placeholder="Find a room" aria-label="Find a room" /></div>
+        <section class="side-section"><p class="side-label">YOUR SPACES</p>
+          <button class="space selected" data-room="velvet"><span class="space-icon ember">V</span><span>Velvet After Dark</span><i class="live-dot"></i></button>
+          <button class="space" data-room="luna"><span class="space-icon plum">L</span><span>Luna's Lounge</span></button>
+          <button class="space" data-room="mika"><span class="space-icon sky">M</span><span>Mika After Hours</span></button>
+        </section>
+        <section class="side-section channels"><p class="side-label">VELVET AFTER DARK <button class="tiny-action" title="Add channel">＋</button></p>
+          <button class="channel active" data-channel="welcome"><span>#</span> welcome</button>
+          <button class="channel" data-channel="late-night"><span>#</span> late-night-chat</button>
+          <button class="channel" data-channel="announcements"><span>#</span> announcements</button>
+          <p class="side-label voice-label">VOICE ROOMS</p>
+          <button class="channel live-channel" id="joinLive"><span>◉</span> velvet-live <i class="live-pill">LIVE</i></button>
+          <button class="channel"><span>♧</span> green room <span class="user-count">12</span></button>
+        </section>
+        <div class="user-bar"><span class="avatar tiny">JD</span><span><strong>Jordan</strong><small>Subscriber</small></span><button class="icon-button" id="settings" aria-label="Settings">⚙</button></div>
+      </aside>
+
+      <main class="main-content">
+        <section class="view active" id="homeView">
+          <header class="topbar"><div><span class="eyebrow">GOOD EVENING, JORDAN</span><h1>Your front row seat.</h1></div><div class="top-actions"><button class="notification" aria-label="Notifications">♢<b></b></button><button class="upgrade-button" id="upgradeButton">✦ Upgrade</button></div></header>
+          <div class="hero-card"><div class="hero-content"><span class="live-kicker"><i></i> LIVE NOW</span><h2>Velvet After Dark</h2><p>Private show starts in progress. Join the room and interact in real time.</p><div class="hero-meta"><span><b>1.2k</b> watching</span><span>18+ verified</span></div><button class="primary-button" id="heroJoin">Join live room <span>→</span></button></div><div class="hero-art"><div class="moon"></div><div class="hero-silhouette"></div><span class="art-label">Tonight, 9:00 PM</span></div></div>
+          <section class="content-section"><div class="section-heading"><div><span class="eyebrow">CURATED FOR YOU</span><h2>Continue exploring</h2></div><button class="text-button" data-view="discover">See all <span>→</span></button></div><div class="creator-grid">
+            <article class="creator-card"><div class="creator-image luna-card"><span class="content-tag">NEW SET</span><button class="heart" aria-label="Save">♡</button></div><div class="creator-info"><span class="avatar small luna">L</span><div><h3>Luna Vale</h3><p>Midnight Motel</p></div><span class="locked">◈</span></div></article>
+            <article class="creator-card"><div class="creator-image mika-card"><span class="content-tag">24 PHOTOS</span><button class="heart" aria-label="Save">♡</button></div><div class="creator-info"><span class="avatar small mika">M</span><div><h3>Mika Bloom</h3><p>Sunday, slowly</p></div><span class="locked">◈</span></div></article>
+            <article class="creator-card"><div class="creator-image noa-card"><span class="content-tag">VIDEO</span><button class="heart" aria-label="Save">♡</button></div><div class="creator-info"><span class="avatar small noa">N</span><div><h3>Noa Heart</h3><p>Soft focus · 12:04</p></div><span class="locked">◈</span></div></article>
+          </div></section>
+          <section class="content-section"><div class="section-heading"><div><span class="eyebrow">WHAT'S HAPPENING</span><h2>From your communities</h2></div></div><div class="activity-list"><article><span class="avatar small velvet">V</span><p><strong>Velvet</strong> posted a new photo collection <em>• 6 min</em><br/><span>“Warm light & a little trouble”</span></p><button class="open-post">Open</button></article><article><span class="avatar small luna">L</span><p><strong>Luna</strong> scheduled a new live event <em>• 1 hr</em><br/><span>“Late-night questions” tomorrow at 10 PM</span></p><button class="open-post">Remind me</button></article></div></section>
+        </section>
+
+        <section class="view" id="roomView"><header class="room-header"><div><span class="room-title"><i class="live-dot"></i> velvet-live</span><p>Velvet After Dark · Members only</p></div><div><button class="icon-button" id="shareRoom">↗</button><button class="leave-button" id="leaveLive">Leave</button></div></header><div class="live-layout"><section class="stage"><div class="stream-stage"><div class="stream-glow"></div><div class="performer-shape"><div class="face"></div><div class="body-shape"></div></div><div class="stream-overlay"><span class="live-kicker"><i></i> LIVE</span><span>01:42:18</span></div><div class="stream-footer"><div class="streamer"><span class="avatar medium velvet">V</span><span><strong>Velvet Noir</strong><small>Private show</small></span></div><span class="viewer-count">◉ 1,248</span></div></div><div class="stage-controls"><button id="muteButton">◉ <span>Mute</span></button><button id="cameraButton">▣ <span>Camera</span></button><button id="fullScreen">⛶ <span>Fullscreen</span></button><button class="tip-button" id="tipButton">✦ Send a tip</button></div></section><aside class="room-panel"><div class="panel-tabs"><button class="active" data-panel="chat">Chat <b>142</b></button><button data-panel="control">Control</button></div><div id="chatPanel" class="panel-content active"><div class="chat-notice">Welcome to Velvet's private room. Be kind, respect boundaries.</div><div class="messages" id="messages"><div class="message"><span class="avatar small luna">L</span><p><strong>luna_loves</strong><small>9:41 PM</small><br/>you look incredible tonight ✨</p></div><div class="message"><span class="avatar small mika">M</span><p><strong>mikasfavorite</strong><small>9:41 PM</small><br/>the lighting is everything</p></div><div class="message own"><p><strong>Jordan</strong><small>9:42 PM</small><br/>Happy to be here!</p></div></div><form class="chat-input" id="chatForm"><input id="chatInput" placeholder="Message velvet-live" autocomplete="off"/><button aria-label="Send">↑</button></form></div><div id="controlPanel" class="panel-content"><div class="control-state"><span class="consent-icon">✓</span><div><strong>Control session enabled</strong><p>Velvet has invited you to participate.</p></div></div><div class="device-card"><div><span class="device-icon">⌁</span><span><strong>Universal device bridge</strong><small>Connected · Secure session</small></span></div><button id="disconnectDevice">Disconnect</button></div><label class="intensity-label">INTENSITY <output id="intensityValue">30%</output></label><input class="range" id="intensity" type="range" min="0" max="100" value="30"/><div class="control-presets"><button data-intensity="15">Tease</button><button data-intensity="45">Wave</button><button data-intensity="70">Pulse</button></div><button class="stop-button" id="emergencyStop">■ Emergency stop</button><p class="control-footnote">Controls are enabled only during this consented session. Every action is visible to the performer.</p></div></aside></div></section>
+
+        <section class="view" id="discoverView"><header class="topbar"><div><span class="eyebrow">EXPLORE EMBERFANS</span><h1>Find your new obsession.</h1></div><button class="upgrade-button" id="discoverUpgrade">✦ Upgrade</button></header><div class="filter-row"><button class="filter active">For you</button><button class="filter">Live now</button><button class="filter">Photos</button><button class="filter">Videos</button><button class="filter">New creators</button></div><div class="discover-grid"><article class="feature-tile large"><div class="tile-art art-one"></div><div><span class="live-kicker"><i></i> LIVE ROOM</span><h2>The Midnight Hour</h2><p>with Nova and 842 members</p><button class="secondary-button" data-join>Enter room</button></div></article><article class="feature-tile"><div class="tile-art art-two"></div><div><span class="content-tag">EXCLUSIVE</span><h3>Uncut, vol. 3</h3><p>by Aria Monroe</p></div></article><article class="feature-tile"><div class="tile-art art-three"></div><div><span class="content-tag">PHOTO SET</span><h3>Golden hour</h3><p>by Sloane</p></div></article></div></section>
+
+        <section class="view" id="libraryView"><header class="topbar"><div><span class="eyebrow">YOUR COLLECTION</span><h1>Library</h1></div></header><div class="library-tabs"><button class="active">All saved</button><button>Videos</button><button>Photo sets</button><button>Purchased</button></div><div class="empty-library"><div>▦</div><h2>Your library is ready.</h2><p>Save a post or unlock a collection to keep it here.</p><button class="primary-button" data-view="discover">Discover creators <span>→</span></button></div></section>
+        <section class="view" id="profileView"><header class="topbar"><div><span class="eyebrow">YOUR ACCOUNT</span><h1>Jordan's profile</h1></div></header><div class="profile-card"><span class="avatar profile-avatar">JD</span><div><h2>Jordan</h2><p>Member since September 2026</p><span class="member-badge">✦ Ember Plus</span></div><button class="secondary-button" id="manageMembership">Manage membership</button></div><div class="settings-list"><button><span>◈</span><div><strong>Age verification</strong><small>Verified · 18+</small></div><b>›</b></button><button><span>◌</span><div><strong>Privacy & safety</strong><small>Watermarks, sessions and account security</small></div><b>›</b></button><button><span>▣</span><div><strong>Connected devices</strong><small>Manage universal bridge connections</small></div><b>›</b></button></div></section>
+      </main>
+    </div>
+    <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><button class="modal-close" id="closeModal" aria-label="Close">×</button><span class="modal-icon">✦</span><h2 id="modalTitle">Unlock Ember Plus</h2><p id="modalText">Get access to every room, creator library, and members-only live event.</p><div class="plans"><button class="plan selected"><strong>Monthly</strong><b>$14.99</b><small>per month</small></button><button class="plan"><strong>Annual</strong><b>$119.99</b><small>save 33%</small></button></div><button class="primary-button wide" id="confirmUpgrade">Continue securely <span>→</span></button><small class="modal-note">Demo only · No payment will be processed.</small></section></div>
+    <div class="toast" id="toast" role="status"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
