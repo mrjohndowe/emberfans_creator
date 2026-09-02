@@ -5,7 +5,7 @@ const messages = document.querySelector('#messageList');
 const form = document.querySelector('#messageForm');
 let user, community, channel, sidebar, suppressChannelClickUntil = 0;
 
-const icons = { text: '#', forum: '[]', voice: '()', auditorium: '()' };
+const icons = { text: '#', forum: '[]', voice: '🔊', auditorium: '🎙' };
 const titles = { text: 'TEXT CHANNEL', forum: 'FORUM CHANNEL', voice: 'VOICE CHANNEL', auditorium: 'AUDITORIUM' };
 
 const menu = document.createElement('div');
