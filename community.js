@@ -69,6 +69,24 @@ function categoryActions(category) {
   ];
 }
 
+async function deleteChannel(channelItem) {
+  const enteredName = prompt(`This permanently deletes the channel and its messages.\n\nType ${channelItem.name} to confirm.`);
+  if (enteredName === null) return;
+  if (enteredName.trim() !== channelItem.name) {
+    alert('The channel name did not match. Nothing was deleted.');
+    return;
+  }
+  try {
+    await api(`/api/channels/${channelItem.id}`, { method: 'DELETE' });
+    if (channel?.id === channelItem.id) {
+      channel = null;
+      form.hidden = true;
+      messages.innerHTML = '<p class="empty">Channel deleted.</p>';
+    }
+    await select(community);
+  } catch (error) { alert(error.message); }
+}
+
 function render(items, forum) {
   messages.innerHTML = items.length ? items.map(item => forum
     ? `<article style="background:#1a1b25;border:1px solid #323442;border-radius:9px;padding:15px"><h3>${esc(item.title)}</h3><small>${esc(item.author.username)} - ${new Date(item.createdAt).toLocaleString()}</small><p>${esc(item.body)}</p></article>`
@@ -197,7 +215,11 @@ function draw() {
       button.textContent = `${icons[channelItem.type]} ${channelItem.name}`;
       button.onclick = () => { if (Date.now() >= suppressChannelClickUntil) open(channelItem); };
       attachChannelDrag(button, channelItem);
-      button.oncontextmenu = event => canEdit() && contextMenu(event, [{ label: 'Open Channel', action: () => open(channelItem) }, ...categoryActions(categoryItem)]);
+      button.oncontextmenu = event => canEdit() && contextMenu(event, [
+        { label: 'Open Channel', action: () => open(channelItem) },
+        ...categoryActions(categoryItem),
+        { label: 'Delete Channel', danger: true, action: () => deleteChannel(channelItem) }
+      ]);
       group.append(button);
     });
     section.append(group);
