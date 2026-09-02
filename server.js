@@ -9,13 +9,16 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const multer = require('multer');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const jwtSecret = process.env.JWT_SECRET || crypto.randomBytes(48).toString('hex');
 const databasePath = path.resolve(process.env.EMBERFANS_DB_PATH || './data/emberfans.db');
+const mediaDirectory = path.resolve(process.env.EMBERFANS_MEDIA_PATH || './data/media');
 
 fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+fs.mkdirSync(mediaDirectory, { recursive: true });
 const db = new Database(databasePath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -68,8 +71,25 @@ db.exec(`
   );
 `);
 
+const contentColumns = db.prepare('PRAGMA table_info(content_items)').all().map(column => column.name);
+if (!contentColumns.includes('media_path')) db.exec('ALTER TABLE content_items ADD COLUMN media_path TEXT');
+if (!contentColumns.includes('media_mime_type')) db.exec('ALTER TABLE content_items ADD COLUMN media_mime_type TEXT');
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_request, _file, callback) => callback(null, mediaDirectory),
+    filename: (_request, file, callback) => callback(null, `${crypto.randomUUID()}${path.extname(file.originalname).toLowerCase()}`)
+  }),
+  limits: { fileSize: 100 * 1024 * 1024, files: 1 },
+  fileFilter: (_request, file, callback) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/webm'];
+    callback(allowed.includes(file.mimetype) ? null : new Error('Only JPEG, PNG, WebP, MP4, and WebM files are accepted.'), allowed.includes(file.mimetype));
+  }
+});
+
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-origin' } }));
 app.use(express.json({ limit: '64kb' }));
+app.use((request, response, next) => request.path.startsWith('/data/') ? response.sendStatus(404) : next());
 app.use(express.static(path.join(__dirname), { index: 'index.html', dotfiles: 'deny' }));
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false });
@@ -103,6 +123,12 @@ function requireRole(...roles) {
     : response.status(403).json({ error: 'You do not have permission for this action.' });
 }
 
+function hasContentAccess(userId, item) {
+  if (item.access_type === 'free') return true;
+  const entitlement = db.prepare(`SELECT id FROM entitlements WHERE user_id = ? AND (content_id = ? OR (content_id IS NULL AND entitlement_type = 'subscriber')) AND (expires_at IS NULL OR expires_at > ?) LIMIT 1`).get(userId, item.id, new Date().toISOString());
+  return Boolean(entitlement);
+}
+
 app.get('/api/health', (_request, response) => response.json({ ok: true, service: 'emberfans-api' }));
 
 app.post('/api/auth/register', authLimiter, (request, response) => {
@@ -134,7 +160,8 @@ app.post('/api/auth/login', authLimiter, (request, response) => {
 app.get('/api/me', authenticate, (request, response) => response.json({ user: publicUser(request.user) }));
 
 app.get('/api/content', authenticate, (request, response) => {
-  const items = db.prepare(`SELECT content_items.*, users.display_name AS performer_name FROM content_items JOIN users ON users.id = content_items.performer_id WHERE published_at IS NOT NULL ORDER BY published_at DESC`).all();
+  const items = db.prepare(`SELECT content_items.*, users.display_name AS performer_name FROM content_items JOIN users ON users.id = content_items.performer_id WHERE published_at IS NOT NULL ORDER BY published_at DESC`).all()
+    .map(item => ({ ...item, hasAccess: hasContentAccess(request.user.id, item), mediaUrl: item.media_path && hasContentAccess(request.user.id, item) ? `/api/media/${item.id}` : null }));
   response.json({ items });
 });
 
@@ -146,6 +173,26 @@ app.post('/api/content', authenticate, requireRole('performer', 'admin'), (reque
   if (!validKinds.includes(kind) || !validAccessTypes.includes(accessType)) return response.status(400).json({ error: 'Choose a valid content type and access type.' });
   const result = db.prepare('INSERT INTO content_items (performer_id, title, summary, kind, access_type, published_at) VALUES (?, ?, ?, ?, ?, ?)').run(request.user.id, title.trim(), String(summary).trim(), kind, accessType, new Date().toISOString());
   response.status(201).json({ item: db.prepare('SELECT * FROM content_items WHERE id = ?').get(result.lastInsertRowid) });
+});
+
+app.post('/api/content/:id/media', authenticate, requireRole('performer', 'admin'), upload.single('media'), (request, response) => {
+  const item = db.prepare('SELECT * FROM content_items WHERE id = ?').get(request.params.id);
+  if (!item) return response.status(404).json({ error: 'Content item was not found.' });
+  if (request.user.role !== 'admin' && item.performer_id !== request.user.id) return response.status(403).json({ error: 'Only the performer who created this item can upload media.' });
+  if (!request.file) return response.status(400).json({ error: 'Select a supported image or video file.' });
+  if (item.media_path) fs.rmSync(path.join(mediaDirectory, item.media_path), { force: true });
+  db.prepare('UPDATE content_items SET media_path = ?, media_mime_type = ? WHERE id = ?').run(request.file.filename, request.file.mimetype, item.id);
+  response.status(201).json({ itemId: item.id, uploaded: true });
+});
+
+app.get('/api/media/:contentId', authenticate, (request, response) => {
+  const item = db.prepare('SELECT * FROM content_items WHERE id = ?').get(request.params.contentId);
+  if (!item || !item.media_path) return response.status(404).json({ error: 'Media was not found.' });
+  if (!hasContentAccess(request.user.id, item) && request.user.id !== item.performer_id && request.user.role !== 'admin') return response.status(403).json({ error: 'This media requires an active entitlement.' });
+  response.setHeader('Cache-Control', 'private, no-store');
+  response.setHeader('Content-Disposition', 'inline');
+  response.type(item.media_mime_type);
+  response.sendFile(path.join(mediaDirectory, item.media_path));
 });
 
 app.post('/api/device-sessions/:id/stop', authenticate, (request, response) => {
@@ -161,6 +208,8 @@ app.post('/api/device-sessions/:id/stop', authenticate, (request, response) => {
 });
 
 app.use((error, _request, response, _next) => {
+  if (error instanceof multer.MulterError) return response.status(400).json({ error: 'Upload failed. Files may be up to 100 MB.' });
+  if (error.message && error.message.includes('Only JPEG')) return response.status(400).json({ error: error.message });
   console.error('[emberfans] unhandled request error', error);
   response.status(500).json({ error: 'An unexpected server error occurred.' });
 });

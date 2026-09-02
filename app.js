@@ -3,6 +3,30 @@ const $$ = (selector, context = document) => [...context.querySelectorAll(select
 const toast = $('#toast');
 let toastTimer;
 
+async function hydrateSignedInUser() {
+  const token = sessionStorage.getItem('emberfansToken');
+  if (!token || location.hostname.endsWith('github.io')) return;
+  try {
+    const response = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) throw new Error('expired');
+    const { user } = await response.json();
+    const name = $('.user-bar strong');
+    if (name) name.textContent = user.displayName;
+    const status = $('.user-bar small');
+    if (status) status.textContent = user.role;
+    const creatorButton = $('#newRoom');
+    if (creatorButton && ['performer', 'admin'].includes(user.role)) {
+      creatorButton.title = 'Open creator studio';
+      creatorButton.addEventListener('click', () => window.location.assign('creator.html'));
+    }
+  } catch {
+    sessionStorage.removeItem('emberfansToken');
+    sessionStorage.removeItem('emberfansUser');
+  }
+}
+
+hydrateSignedInUser();
+
 function showToast(message) {
   toast.textContent = message;
   toast.classList.add('show');

@@ -11,6 +11,8 @@ EmberFans is beginning as a real local service with an existing GitHub Pages vis
 - SQLite persistence stored outside version control
 - Viewer, performer, moderator, and administrator roles
 - Performer-only content publishing API
+- Creator studio with protected image/video upload support
+- Authenticated media delivery that never exposes the media directory as a static URL
 - SFW photo, NSFW photo, video, and live-event content records
 - Permissioned emergency-stop API design with an audit trail
 - Rate limits and common security headers
@@ -25,6 +27,18 @@ EmberFans is beginning as a real local service with an existing GitHub Pages vis
 
 The SQLite database is created at `data/emberfans.db` by default. It is intentionally excluded from Git.
 
+## Creator workflow
+
+1. Register an account at `http://127.0.0.1:3000/auth.html`.
+2. An administrator approves the performer role locally with:
+
+   `node scripts/promote-user.js user@example.com performer`
+
+3. Sign in again, then open `http://127.0.0.1:3000/creator.html`.
+4. Publish a SFW photo, NSFW photo, video, or live-event record and optionally upload a JPEG, PNG, WebP, MP4, or WebM file up to 100 MB.
+
+Uploads are stored outside the public static directory. The browser can request media only through the authenticated `/api/media/:contentId` endpoint after the service checks the viewer's entitlement.
+
 ## Current API
 
 | Method | Route | Access |
@@ -35,6 +49,8 @@ The SQLite database is created at `data/emberfans.db` by default. It is intentio
 | `GET` | `/api/me` | Signed-in user |
 | `GET` | `/api/content` | Signed-in user |
 | `POST` | `/api/content` | Performer or administrator |
+| `POST` | `/api/content/:id/media` | Owning performer or administrator |
+| `GET` | `/api/media/:contentId` | Signed-in entitled viewer |
 | `POST` | `/api/device-sessions/:id/stop` | Device-session participant |
 
 ## Production requirements not yet implemented
