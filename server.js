@@ -130,6 +130,12 @@ db.exec(`
     body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 4000),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS live_channel_participants (
+    channel_id INTEGER NOT NULL REFERENCES channels(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (channel_id, user_id)
+  );
 `);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_display_name_unique ON users(display_name COLLATE NOCASE)');
 
@@ -358,6 +364,29 @@ app.post('/api/channels/:id/forum-posts', authenticate, (request, response) => {
   if (title.length < 2 || title.length > 140 || body.length < 1 || body.length > 4000) return response.status(400).json({ error: 'Forum posts need a 2 to 140 character title and a message up to 4,000 characters.' });
   const result = db.prepare('INSERT INTO forum_posts (channel_id, author_id, title, body) VALUES (?, ?, ?, ?)').run(channel.id, request.user.id, title, body);
   response.status(201).json({ post: db.prepare('SELECT * FROM forum_posts WHERE id = ?').get(result.lastInsertRowid) });
+});
+
+app.get('/api/channels/:id/participants', authenticate, (request, response) => {
+  const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
+  if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
+  if (!['voice', 'auditorium'].includes(channel.type)) return response.status(400).json({ error: 'Participants are available only for voice and auditorium channels.' });
+  if (!communityMembership(channel.community_id, request.user.id)) return response.status(403).json({ error: 'Join this community before entering the room.' });
+  const participants = db.prepare('SELECT users.id, users.display_name, users.role, live_channel_participants.joined_at FROM live_channel_participants JOIN users ON users.id = live_channel_participants.user_id WHERE channel_id = ? ORDER BY joined_at').all(channel.id);
+  response.json({ participants });
+});
+
+app.post('/api/channels/:id/join', authenticate, (request, response) => {
+  const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
+  if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
+  if (!['voice', 'auditorium'].includes(channel.type)) return response.status(400).json({ error: 'Only voice and auditorium channels can be joined as rooms.' });
+  if (!communityMembership(channel.community_id, request.user.id)) return response.status(403).json({ error: 'Join this community before entering the room.' });
+  db.prepare('INSERT OR IGNORE INTO live_channel_participants (channel_id, user_id) VALUES (?, ?)').run(channel.id, request.user.id);
+  response.status(201).json({ joined: true });
+});
+
+app.delete('/api/channels/:id/join', authenticate, (request, response) => {
+  db.prepare('DELETE FROM live_channel_participants WHERE channel_id = ? AND user_id = ?').run(request.params.id, request.user.id);
+  response.sendStatus(204);
 });
 
 app.delete('/api/channel-messages/:id', authenticate, (request, response) => {
