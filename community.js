@@ -20,7 +20,11 @@ document.body.append(channelModal);
 
 async function api(url, options = {}) {
   const response = await fetch(url, { ...options, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) } });
-  const body = response.status === 204 ? {} : await response.json();
+  const isJson = response.headers.get('content-type')?.includes('application/json');
+  const body = response.status === 204 ? {} : isJson ? await response.json() : {};
+  if (!isJson && response.status !== 204) {
+    throw Error('The server returned an unexpected response. Restart the EmberFans server, refresh this page, and try again.');
+  }
   if (!response.ok) throw Error(body.error || 'Request failed.');
   return body;
 }
