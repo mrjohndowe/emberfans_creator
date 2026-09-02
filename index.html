@@ -9,12 +9,20 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
+    <style>
+      .brand { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 14px; overflow: hidden; background: #fff; box-shadow: 0 5px 25px #ec3f5a55; }
+      .brand-logo { display: block; width: 100%; height: 100%; object-fit: contain; }
+      .wordmark { display: flex; align-items: center; gap: 9px; }
+      .wordmark > img { width: 31px; height: 31px; object-fit: contain; background: #fff; border-radius: 8px; }
+      .wordmark > span { font-weight: 800; font-size: 15px; letter-spacing: .9px; color: #fff; }
+      .wordmark > span > span { color: var(--ember); }
+    </style>
   </head>
   <body>
     <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
     <div class="app-shell">
       <aside class="rail" aria-label="Primary navigation">
-        <a class="brand" href="#home" aria-label="EmberFans home"><span class="brand-mark">E</span></a>
+        <a class="brand" href="#home" aria-label="EmberFans home"><img class="brand-logo" src="assets/emberfans-logo.png" alt="EmberFans" /></a>
         <nav class="rail-nav">
           <button class="rail-button active" data-view="home" title="Home"><span>⌂</span></button>
           <button class="rail-button" data-view="discover" title="Discover"><span>◈</span></button>
@@ -24,7 +32,7 @@
       </aside>
 
       <aside class="sidebar">
-        <div class="sidebar-top"><a class="wordmark" href="#home">EMBER<span>FANS</span></a><button class="icon-button" id="newRoom" aria-label="Create room">＋</button></div>
+        <div class="sidebar-top"><a class="wordmark" href="#home"><img src="assets/emberfans-logo.png" alt="EmberFans" /><span>EMBER<span>FANS</span></span></a><button class="icon-button" id="newRoom" aria-label="Create room">＋</button></div>
         <div class="search"><span>⌕</span><input id="searchRooms" placeholder="Find a room" aria-label="Find a room" /></div>
         <section class="side-section"><p class="side-label">YOUR SPACES</p>
           <button class="space selected" data-room="velvet"><span class="space-icon ember">V</span><span>Velvet After Dark</span><i class="live-dot"></i></button>
