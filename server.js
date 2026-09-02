@@ -94,6 +94,24 @@ db.exec(`
     assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (community_id, user_id)
   );
+  CREATE TABLE IF NOT EXISTS community_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    community_id INTEGER NOT NULL REFERENCES communities(id),
+    name TEXT NOT NULL,
+    price_cents INTEGER NOT NULL CHECK(price_cents >= 0),
+    interval TEXT NOT NULL DEFAULT 'month' CHECK(interval IN ('month', 'year')),
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS community_subscriptions (
+    community_id INTEGER NOT NULL REFERENCES communities(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    plan_id INTEGER NOT NULL REFERENCES community_plans(id),
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'cancelled')),
+    expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (community_id, user_id)
+  );
   CREATE TABLE IF NOT EXISTS channels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     community_id INTEGER NOT NULL REFERENCES communities(id),
@@ -182,6 +200,7 @@ db.prepare('SELECT id FROM communities').all().forEach(community => {
     category = { id: result.lastInsertRowid };
   }
   db.prepare('UPDATE channels SET category_id = ? WHERE community_id = ? AND category_id IS NULL').run(category.id, community.id);
+  if (!db.prepare('SELECT id FROM community_plans WHERE community_id = ? LIMIT 1').get(community.id)) db.prepare("INSERT INTO community_plans (community_id, name, price_cents, interval) VALUES (?, 'Supporter', 999, 'month')").run(community.id);
 });
 
 const upload = multer({
@@ -235,7 +254,9 @@ function requireRole(...roles) {
 function hasContentAccess(userId, item) {
   if (item.access_type === 'free') return true;
   const entitlement = db.prepare(`SELECT id FROM entitlements WHERE user_id = ? AND (content_id = ? OR (content_id IS NULL AND entitlement_type = 'subscriber')) AND (expires_at IS NULL OR expires_at > ?) LIMIT 1`).get(userId, item.id, new Date().toISOString());
-  return Boolean(entitlement);
+  if (entitlement) return true;
+  if (item.access_type !== 'subscriber' || !item.channel_id) return false;
+  return Boolean(db.prepare(`SELECT id FROM community_subscriptions JOIN channels ON channels.community_id = community_subscriptions.community_id WHERE community_subscriptions.user_id = ? AND channels.id = ? AND community_subscriptions.status = 'active' AND (community_subscriptions.expires_at IS NULL OR community_subscriptions.expires_at > ?) LIMIT 1`).get(userId, item.channel_id, new Date().toISOString()));
 }
 
 function communityMembership(communityId, userId) {
@@ -312,6 +333,7 @@ app.post('/api/communities', authenticate, requireRole('performer', 'admin'), (r
     const result = db.transaction(() => {
       const created = db.prepare('INSERT INTO communities (owner_id, name, slug, description) VALUES (?, ?, ?, ?)').run(request.user.id, name.trim(), slug, String(description).trim());
       db.prepare("INSERT INTO community_members (community_id, user_id, role) VALUES (?, ?, 'owner')").run(created.lastInsertRowid, request.user.id);
+      db.prepare("INSERT INTO community_plans (community_id, name, price_cents, interval) VALUES (?, 'Supporter', 999, 'month')").run(created.lastInsertRowid);
       const category = db.prepare('INSERT INTO channel_categories (community_id, name, position) VALUES (?, ?, ?)').run(created.lastInsertRowid, 'GENERAL', 0);
       db.prepare('INSERT INTO channels (community_id, name, category_id, position) VALUES (?, ?, ?, ?), (?, ?, ?, ?)').run(created.lastInsertRowid, 'welcome', category.lastInsertRowid, 0, created.lastInsertRowid, 'general', category.lastInsertRowid, 1);
       communityAudit(created.lastInsertRowid, request.user.id, 'community_created', { name: name.trim(), slug });
@@ -329,6 +351,27 @@ app.post('/api/communities/:id/join', authenticate, (request, response) => {
   if (!community) return response.status(404).json({ error: 'Community was not found.' });
   db.prepare("INSERT OR IGNORE INTO community_members (community_id, user_id, role) VALUES (?, ?, 'member')").run(community.id, request.user.id);
   response.status(201).json({ joined: true });
+});
+
+app.get('/api/communities/:id/plans', authenticate, (request, response) => {
+  const communityId = Number(request.params.id);
+  if (!communityMembership(communityId, request.user.id)) return response.status(403).json({ error: 'Join this community before viewing its membership options.' });
+  const plans = db.prepare("SELECT id, name, price_cents, interval FROM community_plans WHERE community_id = ? AND active = 1 ORDER BY price_cents, id").all(communityId);
+  const subscription = db.prepare(`SELECT community_subscriptions.status, community_subscriptions.expires_at, community_plans.id AS plan_id, community_plans.name AS plan_name, community_plans.price_cents, community_plans.interval
+    FROM community_subscriptions JOIN community_plans ON community_plans.id = community_subscriptions.plan_id
+    WHERE community_subscriptions.community_id = ? AND community_subscriptions.user_id = ?`).get(communityId, request.user.id);
+  response.json({ plans, subscription, demo: true });
+});
+
+app.post('/api/communities/:id/subscribe-demo', authenticate, (request, response) => {
+  const communityId = Number(request.params.id);
+  if (!communityMembership(communityId, request.user.id)) return response.status(403).json({ error: 'Join this community before starting a membership.' });
+  const plan = db.prepare('SELECT * FROM community_plans WHERE id = ? AND community_id = ? AND active = 1').get(Number(request.body?.planId), communityId);
+  if (!plan) return response.status(404).json({ error: 'That membership option is not available.' });
+  db.prepare(`INSERT INTO community_subscriptions (community_id, user_id, plan_id, status, expires_at)
+    VALUES (?, ?, ?, 'active', NULL)
+    ON CONFLICT(community_id, user_id) DO UPDATE SET plan_id = excluded.plan_id, status = 'active', expires_at = NULL, created_at = CURRENT_TIMESTAMP`).run(communityId, request.user.id, plan.id);
+  response.status(201).json({ subscribed: true, plan: { id: plan.id, name: plan.name, price_cents: plan.price_cents, interval: plan.interval }, demo: true });
 });
 
 app.get('/api/communities/:id/channels', authenticate, (request, response) => {
@@ -609,7 +652,10 @@ app.get('/api/content', authenticate, (request, response) => {
     if (!channel || channel.display_mode !== 'gallery' || !communityMembership(channel.community_id, request.user.id)) return response.status(404).json({ error: 'Media channel was not found.' });
   }
   const items = db.prepare(`SELECT content_items.*, users.display_name AS performer_name FROM content_items JOIN users ON users.id = content_items.performer_id WHERE published_at IS NOT NULL AND (? IS NULL OR content_items.channel_id = ?) ORDER BY published_at DESC`).all(channelId, channelId)
-    .map(item => ({ ...item, hasAccess: hasContentAccess(request.user.id, item), mediaUrl: item.media_path && hasContentAccess(request.user.id, item) ? `/api/media/${item.id}` : null }));
+    .map(item => {
+      const hasAccess = request.user.id === item.performer_id || request.user.role === 'admin' || hasContentAccess(request.user.id, item);
+      return { ...item, hasAccess, mediaUrl: item.media_path && hasAccess ? `/api/media/${item.id}` : null };
+    });
   response.json({ items });
 });
 
@@ -628,6 +674,18 @@ app.post('/api/content', authenticate, (request, response) => {
   }
   const result = db.prepare('INSERT INTO content_items (performer_id, channel_id, title, summary, kind, access_type, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(request.user.id, mediaChannelId, title.trim(), String(summary).trim(), kind, accessType, new Date().toISOString());
   response.status(201).json({ item: db.prepare('SELECT * FROM content_items WHERE id = ?').get(result.lastInsertRowid) });
+});
+
+app.post('/api/content/:id/unlock-demo', authenticate, (request, response) => {
+  const item = db.prepare('SELECT * FROM content_items WHERE id = ?').get(request.params.id);
+  if (!item || !item.published_at) return response.status(404).json({ error: 'Media item was not found.' });
+  if (item.access_type !== 'purchase') return response.status(400).json({ error: 'Only one-time purchase items can be demo-unlocked.' });
+  if (item.channel_id) {
+    const mediaChannel = db.prepare('SELECT community_id FROM channels WHERE id = ?').get(item.channel_id);
+    if (!mediaChannel || !communityMembership(mediaChannel.community_id, request.user.id)) return response.status(403).json({ error: 'Join this community before unlocking its media.' });
+  }
+  db.prepare("INSERT OR IGNORE INTO entitlements (user_id, content_id, entitlement_type) VALUES (?, ?, 'purchase')").run(request.user.id, item.id);
+  response.status(201).json({ unlocked: true, demo: true });
 });
 
 app.post('/api/content/:id/media', authenticate, upload.single('media'), (request, response) => {

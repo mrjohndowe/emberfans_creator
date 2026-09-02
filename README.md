@@ -52,6 +52,7 @@ Uploads are stored outside the public static directory. The browser can request 
 8. Community moderators can delete a category from its right-click menu only after typing the category's exact name. Its channels are moved to another category so their messages and forum posts remain available.
 9. Community owners, moderators, and administrators have an Administration cog in the sidebar. Its Roles & Permissions page assigns Administrator, Moderator, Creator, Subscriber, or Member roles. The Owner role is protected; only the owner or a global administrator can change other members' roles. Administrators manage channels/content/moderation, moderators manage channels/moderation, and creators can upload to Media channels.
 10. The Audit Log is read-only, listing community/channel/category creation and deletion, sidebar reordering, moderator message removal, role assignment, and media upload/removal with the acting account and timestamp. Normal member activity—chat messages and joining or leaving voice rooms—is deliberately excluded.
+11. Every community starts with a `Supporter` membership option. The sidebar Membership button and Media Gallery membership button open a demo checkout: it grants subscriber access without charging a card. One-time purchase media has a separate Demo unlock action. This is intentionally a test-only access workflow, not real payment processing.
 
 The direct-message API is available for signed-in users. The initial community screen focuses on channels first; a dedicated inbox interface is the next client-side community enhancement.
 
@@ -70,6 +71,8 @@ The direct-message API is available for signed-in users. The initial community s
 | `POST` | `/api/device-sessions/:id/stop` | Device-session participant |
 | `GET`, `POST` | `/api/communities` | Signed-in user / performer or administrator |
 | `POST` | `/api/communities/:id/join` | Signed-in user |
+| `GET` | `/api/communities/:id/plans` | Community member |
+| `POST` | `/api/communities/:id/subscribe-demo` | Community member; demo membership only |
 | `GET` | `/api/communities/:id/members` | Community moderator |
 | `PUT` | `/api/communities/:id/members/:userId/role` | Community owner or global administrator |
 | `GET` | `/api/communities/:id/audit-log` | Community moderator, read-only |
@@ -81,13 +84,14 @@ The direct-message API is available for signed-in users. The initial community s
 | `GET`, `POST` | `/api/forum-posts/:id/replies` | Community member |
 | `DELETE` | `/api/forum-posts/:id`, `/api/forum-replies/:id` | Author or community moderator |
 | `DELETE` | `/api/content/:id` | Owning performer or administrator |
+| `POST` | `/api/content/:id/unlock-demo` | Signed-in community member; demo purchase unlock |
 | `DELETE` | `/api/channel-messages/:id` | Message author or moderator |
 | `GET`, `POST` | `/api/direct-conversations` | Signed-in user |
 | `GET`, `POST` | `/api/direct-conversations/:id/messages` | Conversation participant |
 
 ## Production requirements not yet implemented
 
-This foundation is not ready for real payments, real NSFW media, live streaming, or device-vendor operation. Those steps require a server host, managed database, approved adult-content payment provider, age/identity verification, private media storage with expiring links, live-video provider, moderation tooling, and vendor-specific device integrations.
+This foundation is not ready for real payments, real NSFW media, live streaming, or device-vendor operation. The current membership and one-time unlock controls are demos and do not process payments. Production needs a server host, managed database, an adult-content-compatible payment provider plus webhook verification, age/identity verification, private media storage with expiring links, live-video provider, moderation tooling, and vendor-specific device integrations.
 
 The emergency-stop endpoint establishes the authorization and audit model. It is not a connection to a physical device. Browser software cannot guarantee that viewers never record content; the appropriate next layers are watermarking, signed playback, access/session controls, and incident-response tooling.
 

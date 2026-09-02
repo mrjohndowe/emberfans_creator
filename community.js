@@ -25,6 +25,11 @@ settingsModal.className = 'settings-modal';
 settingsModal.innerHTML = '<section class="settings-card"><nav class="settings-nav"><strong>Administration</strong><button class="active" data-settings-view="overview">Overview</button><button data-settings-view="audit">Audit Log</button><button data-settings-view="roles">Roles & Permissions</button><button data-settings-view="moderation">Moderation</button><button data-settings-view="integrations">Integrations</button></nav><main class="settings-main"><button class="settings-close" aria-label="Close administration settings">×</button><div id="settingsContent"></div></main></section>';
 document.body.append(settingsModal);
 
+const membershipModal = document.createElement('div');
+membershipModal.className = 'settings-modal';
+membershipModal.innerHTML = '<section class="membership-card"><button class="settings-close" aria-label="Close membership">×</button><div id="membershipContent"></div></section>';
+document.body.append(membershipModal);
+
 const mediaUploadModal = document.createElement('div');
 mediaUploadModal.className = 'settings-modal';
 mediaUploadModal.innerHTML = '<form class="media-upload-card"><button type="button" class="settings-close" aria-label="Close upload">×</button><h2>Upload to Media</h2><p>Photos, videos, and GIFs appear in this gallery. Choose the audience before publishing.</p><label>Title<input id="mediaUploadTitle" maxlength="120" required></label><label>Media type<select id="mediaUploadKind"><option value="sfw_photo">Photo or GIF</option><option value="nsfw_photo">18+ Photo or GIF</option><option value="video">Video</option></select></label><label>Audience<select id="mediaUploadAccess"><option value="free">Free</option><option value="subscriber">Subscribers</option><option value="purchase">One-time purchase</option></select></label><label>File<input id="mediaUploadFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm" required></label><button class="primary-button">Upload media</button><small id="mediaUploadStatus"></small></form>';
@@ -72,6 +77,37 @@ function channelKind(channelItem) {
 
 function canManageMedia(item) {
   return user?.role === 'admin' || item.performer_id === user?.id;
+}
+
+function money(cents) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(cents) || 0) / 100);
+}
+
+async function openMembership() {
+  if (!community) return;
+  membershipModal.style.display = 'grid';
+  const content = membershipModal.querySelector('#membershipContent');
+  content.innerHTML = '<h2>Community membership</h2><p>Loading membership options…</p>';
+  try {
+    const result = await api(`/api/communities/${community.id}/plans`);
+    const active = result.subscription?.status === 'active';
+    const plans = result.plans.map(plan => `<article class="membership-plan"><div><strong>${esc(plan.name)}</strong><small>${money(plan.price_cents)} / ${esc(plan.interval)}</small></div>${active && result.subscription.plan_id === plan.id ? '<b>Active</b>' : `<button data-plan-id="${plan.id}">Start demo membership</button>`}</article>`).join('');
+    content.innerHTML = `<h2>${esc(community.name)} membership</h2><p>${active ? `You have an active ${esc(result.subscription.plan_name)} membership.` : 'Unlock subscriber-only media in this community.'}</p><p class="membership-demo">Demo mode: this activates access without taking a payment. Real checkout comes after an adult-content-compatible payment provider is connected.</p><section class="membership-plans">${plans || '<p>No membership options are available yet.</p>'}</section>`;
+    content.querySelectorAll('[data-plan-id]').forEach(button => button.onclick = async () => {
+      button.disabled = true;
+      button.textContent = 'Activating…';
+      try { await api(`/api/communities/${community.id}/subscribe-demo`, { method: 'POST', body: JSON.stringify({ planId: Number(button.dataset.planId) }) }); await openMembership(); await renderGallery(); }
+      catch (error) { alert(error.message); button.disabled = false; button.textContent = 'Start demo membership'; }
+    });
+  } catch (error) { content.innerHTML = `<h2>Community membership</h2><p>${esc(error.message)}</p>`; }
+}
+
+async function unlockMediaDemo(item) {
+  try {
+    await api(`/api/content/${item.id}/unlock-demo`, { method: 'POST' });
+    closeMediaViewer();
+    await renderGallery();
+  } catch (error) { alert(error.message); }
 }
 
 async function deleteForumPost(post) {
@@ -142,6 +178,7 @@ async function showAdministration(view = 'overview') {
 }
 
 settingsModal.querySelector('.settings-close').onclick = () => settingsModal.style.display = 'none';
+membershipModal.querySelector('.settings-close').onclick = () => membershipModal.style.display = 'none';
 settingsModal.querySelectorAll('[data-settings-view]').forEach(button => button.onclick = () => showAdministration(button.dataset.settingsView));
 mediaUploadModal.querySelector('.settings-close').onclick = () => mediaUploadModal.style.display = 'none';
 mediaUploadModal.querySelector('form').onsubmit = async event => {
@@ -182,7 +219,12 @@ async function openMediaViewer(item) {
   const content = mediaViewerModal.querySelector('#mediaViewerContent');
   content.innerHTML = '<p>Loading media…</p>';
   if (!item.mediaUrl) {
-    content.innerHTML = `<h2>${esc(item.title)}</h2><p>This media requires an active ${esc(item.access_type)} entitlement before it can be viewed.</p>`;
+    const action = item.access_type === 'subscriber'
+      ? '<button id="mediaMembershipButton" class="primary-button">View membership</button>'
+      : item.access_type === 'purchase' ? '<button id="mediaUnlockButton" class="primary-button">Demo unlock</button>' : '';
+    content.innerHTML = `<h2>${esc(item.title)}</h2><p>This media requires an active ${esc(item.access_type)} entitlement before it can be viewed.</p>${action}`;
+    content.querySelector('#mediaMembershipButton')?.addEventListener('click', openMembership);
+    content.querySelector('#mediaUnlockButton')?.addEventListener('click', () => unlockMediaDemo(item));
     return;
   }
   try {
@@ -304,13 +346,14 @@ function renderForum(posts) {
 async function renderGallery() {
   messages.classList.remove('forum-view');
   messages.classList.add('gallery-view');
-  messages.innerHTML = `<section class="gallery-hero"><span>MEDIA GALLERY</span><h2>Creator media</h2><p>Photos, videos, and GIFs shared by creators. This channel has no chat.</p>${canUploadToMedia() ? '<button id="uploadMediaButton" class="gallery-upload">Upload media</button>' : ''}</section><section class="gallery-grid"><p class="empty">Loading media…</p></section>`;
+  messages.innerHTML = `<section class="gallery-hero"><span>MEDIA GALLERY</span><h2>Creator media</h2><p>Photos, videos, and GIFs shared by creators. This channel has no chat.</p><button id="membershipButton" class="gallery-membership">Membership</button>${canUploadToMedia() ? '<button id="uploadMediaButton" class="gallery-upload">Upload media</button>' : ''}</section><section class="gallery-grid"><p class="empty">Loading media…</p></section>`;
   messages.querySelector('#uploadMediaButton')?.addEventListener('click', () => { mediaUploadModal.style.display = 'grid'; document.querySelector('#mediaUploadTitle').focus(); });
+  messages.querySelector('#membershipButton')?.addEventListener('click', openMembership);
   try {
     const result = await api(`/api/content?channelId=${channel.id}`);
     const items = result.items.filter(item => ['sfw_photo', 'nsfw_photo', 'video'].includes(item.kind));
     const grid = messages.querySelector('.gallery-grid');
-    grid.innerHTML = items.length ? items.map(item => `<article class="gallery-card" data-media-id="${item.id}"><div class="gallery-visual ${item.kind}"><span>${item.kind === 'video' ? '▶' : '▦'}</span></div><div><strong>${esc(item.title)}</strong><small>${esc(item.performer_name)} · ${item.access_type}</small>${canManageMedia(item) ? `<button class="gallery-delete" data-media-delete-id="${item.id}">Delete</button>` : ''}</div></article>`).join('') : '<div class="gallery-empty"><div>▦</div><h2>No media yet</h2><p>Creator uploads will appear here.</p></div>';
+    grid.innerHTML = items.length ? items.map(item => `<article class="gallery-card" data-media-id="${item.id}"><div class="gallery-visual ${item.kind} ${item.hasAccess ? '' : 'locked'}"><span>${item.hasAccess ? (item.kind === 'video' ? '▶' : '▦') : '🔒'}</span></div><div><strong>${esc(item.title)}</strong><small>${esc(item.performer_name)} · ${item.access_type}</small>${canManageMedia(item) ? `<button class="gallery-delete" data-media-delete-id="${item.id}">Delete</button>` : ''}</div></article>`).join('') : '<div class="gallery-empty"><div>▦</div><h2>No media yet</h2><p>Creator uploads will appear here.</p></div>';
     items.forEach(item => {
       grid.querySelector(`[data-media-id="${item.id}"]`)?.addEventListener('click', event => { if (!event.target.closest('.gallery-delete')) openMediaViewer(item); });
       grid.querySelector(`[data-media-id="${item.id}"]`)?.addEventListener('contextmenu', event => contextMenu(event, [
@@ -581,6 +624,15 @@ function draw() {
   channels.innerHTML = '';
   const administration = document.querySelector('#communityAdmin');
   administration.innerHTML = '';
+  const membership = document.querySelector('#communityMembership');
+  membership.innerHTML = '';
+  if (community) {
+    const membershipButton = document.createElement('button');
+    membershipButton.className = 'membership-side-button';
+    membershipButton.textContent = '✦ Membership';
+    membershipButton.onclick = openMembership;
+    membership.append(membershipButton);
+  }
   if (canEdit()) {
     const cog = document.createElement('button');
     cog.className = 'admin-cog';
