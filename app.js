@@ -136,6 +136,7 @@ $('#logoutButton').addEventListener('click', () => {
   sessionStorage.removeItem('emberfansUser');
   window.location.assign('auth.html');
 });
+$('#communityButton').addEventListener('click', () => window.location.assign('community.html'));
 $('#searchRooms').addEventListener('input', event => {
   const query = event.target.value.toLowerCase();
   $$('.space').forEach(space => { space.style.display = space.textContent.toLowerCase().includes(query) ? '' : 'none'; });

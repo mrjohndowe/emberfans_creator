@@ -69,6 +69,50 @@ db.exec(`
     details TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS communities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS community_members (
+    community_id INTEGER NOT NULL REFERENCES communities(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'moderator', 'member')),
+    joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (community_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    community_id INTEGER NOT NULL REFERENCES communities(id),
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (community_id, name)
+  );
+  CREATE TABLE IF NOT EXISTS channel_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL REFERENCES channels(id),
+    author_id INTEGER NOT NULL REFERENCES users(id),
+    body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS direct_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_one_id INTEGER NOT NULL REFERENCES users(id),
+    user_two_id INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(user_one_id < user_two_id),
+    UNIQUE (user_one_id, user_two_id)
+  );
+  CREATE TABLE IF NOT EXISTS direct_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL REFERENCES direct_conversations(id),
+    author_id INTEGER NOT NULL REFERENCES users(id),
+    body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_display_name_unique ON users(display_name COLLATE NOCASE)');
 
@@ -130,6 +174,19 @@ function hasContentAccess(userId, item) {
   return Boolean(entitlement);
 }
 
+function communityMembership(communityId, userId) {
+  return db.prepare('SELECT * FROM community_members WHERE community_id = ? AND user_id = ?').get(communityId, userId);
+}
+
+function communityModerator(communityId, user) {
+  const membership = communityMembership(communityId, user.id);
+  return user.role === 'admin' || membership?.role === 'owner' || membership?.role === 'moderator';
+}
+
+function messagePayload(message) {
+  return { id: message.id, body: message.body, createdAt: message.created_at, author: { id: message.author_id, username: message.display_name, role: message.role } };
+}
+
 app.get('/api/health', (_request, response) => response.json({ ok: true, service: 'emberfans-api' }));
 
 app.post('/api/auth/register', authLimiter, (request, response) => {
@@ -159,6 +216,110 @@ app.post('/api/auth/login', authLimiter, (request, response) => {
 });
 
 app.get('/api/me', authenticate, (request, response) => response.json({ user: publicUser(request.user) }));
+
+app.get('/api/communities', authenticate, (request, response) => {
+  const communities = db.prepare(`SELECT communities.*, community_members.role AS member_role, (SELECT count(*) FROM community_members WHERE community_id = communities.id) AS member_count FROM communities JOIN community_members ON community_members.community_id = communities.id WHERE community_members.user_id = ? ORDER BY communities.name`).all(request.user.id);
+  response.json({ communities });
+});
+
+app.post('/api/communities', authenticate, requireRole('performer', 'admin'), (request, response) => {
+  const { name, description = '' } = request.body || {};
+  const slug = String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  if (String(name || '').trim().length < 3 || String(name || '').trim().length > 80 || slug.length < 3) return response.status(400).json({ error: 'Community name must be 3 to 80 characters.' });
+  try {
+    const result = db.transaction(() => {
+      const created = db.prepare('INSERT INTO communities (owner_id, name, slug, description) VALUES (?, ?, ?, ?)').run(request.user.id, name.trim(), slug, String(description).trim());
+      db.prepare("INSERT INTO community_members (community_id, user_id, role) VALUES (?, ?, 'owner')").run(created.lastInsertRowid, request.user.id);
+      db.prepare('INSERT INTO channels (community_id, name) VALUES (?, ?), (?, ?)').run(created.lastInsertRowid, 'welcome', created.lastInsertRowid, 'general');
+      return created.lastInsertRowid;
+    })();
+    response.status(201).json({ community: db.prepare('SELECT * FROM communities WHERE id = ?').get(result) });
+  } catch (error) {
+    if (String(error.message).includes('UNIQUE')) return response.status(409).json({ error: 'A community with that name already exists.' });
+    throw error;
+  }
+});
+
+app.post('/api/communities/:id/join', authenticate, (request, response) => {
+  const community = db.prepare('SELECT * FROM communities WHERE id = ?').get(request.params.id);
+  if (!community) return response.status(404).json({ error: 'Community was not found.' });
+  db.prepare("INSERT OR IGNORE INTO community_members (community_id, user_id, role) VALUES (?, ?, 'member')").run(community.id, request.user.id);
+  response.status(201).json({ joined: true });
+});
+
+app.get('/api/communities/:id/channels', authenticate, (request, response) => {
+  if (!communityMembership(request.params.id, request.user.id)) return response.status(403).json({ error: 'Join this community before viewing its channels.' });
+  response.json({ channels: db.prepare('SELECT * FROM channels WHERE community_id = ? ORDER BY name').all(request.params.id) });
+});
+
+app.post('/api/communities/:id/channels', authenticate, (request, response) => {
+  if (!communityModerator(request.params.id, request.user)) return response.status(403).json({ error: 'Only community moderators can create channels.' });
+  const name = String(request.body?.name || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/(^-|-$)/g, '');
+  if (name.length < 2 || name.length > 48) return response.status(400).json({ error: 'Channel names must be 2 to 48 lowercase characters.' });
+  try { const result = db.prepare('INSERT INTO channels (community_id, name) VALUES (?, ?)').run(request.params.id, name); response.status(201).json({ channel: db.prepare('SELECT * FROM channels WHERE id = ?').get(result.lastInsertRowid) }); }
+  catch (error) { if (String(error.message).includes('UNIQUE')) return response.status(409).json({ error: 'That channel already exists.' }); throw error; }
+});
+
+app.get('/api/channels/:id/messages', authenticate, (request, response) => {
+  const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
+  if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
+  if (!communityMembership(channel.community_id, request.user.id)) return response.status(403).json({ error: 'Join this community before viewing messages.' });
+  const messages = db.prepare(`SELECT channel_messages.*, users.display_name, users.role FROM channel_messages JOIN users ON users.id = channel_messages.author_id WHERE channel_id = ? ORDER BY channel_messages.id DESC LIMIT 100`).all(channel.id).reverse().map(messagePayload);
+  response.json({ messages });
+});
+
+app.post('/api/channels/:id/messages', authenticate, (request, response) => {
+  const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
+  const body = String(request.body?.body || '').trim();
+  if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
+  if (!communityMembership(channel.community_id, request.user.id)) return response.status(403).json({ error: 'Join this community before posting.' });
+  if (!body || body.length > 2000) return response.status(400).json({ error: 'Messages must be 1 to 2,000 characters.' });
+  const result = db.prepare('INSERT INTO channel_messages (channel_id, author_id, body) VALUES (?, ?, ?)').run(channel.id, request.user.id, body);
+  const message = db.prepare(`SELECT channel_messages.*, users.display_name, users.role FROM channel_messages JOIN users ON users.id = channel_messages.author_id WHERE channel_messages.id = ?`).get(result.lastInsertRowid);
+  response.status(201).json({ message: messagePayload(message) });
+});
+
+app.delete('/api/channel-messages/:id', authenticate, (request, response) => {
+  const message = db.prepare('SELECT channel_messages.*, channels.community_id FROM channel_messages JOIN channels ON channels.id = channel_messages.channel_id WHERE channel_messages.id = ?').get(request.params.id);
+  if (!message) return response.status(404).json({ error: 'Message was not found.' });
+  if (message.author_id !== request.user.id && !communityModerator(message.community_id, request.user)) return response.status(403).json({ error: 'Only the author or a moderator can remove this message.' });
+  db.prepare('DELETE FROM channel_messages WHERE id = ?').run(message.id);
+  response.sendStatus(204);
+});
+
+app.get('/api/direct-conversations', authenticate, (request, response) => {
+  const conversations = db.prepare(`SELECT direct_conversations.*, CASE WHEN user_one_id = ? THEN two.display_name ELSE one.display_name END AS recipient_username, CASE WHEN user_one_id = ? THEN two.id ELSE one.id END AS recipient_id FROM direct_conversations JOIN users AS one ON one.id = user_one_id JOIN users AS two ON two.id = user_two_id WHERE user_one_id = ? OR user_two_id = ? ORDER BY direct_conversations.id DESC`).all(request.user.id, request.user.id, request.user.id, request.user.id);
+  response.json({ conversations });
+});
+
+app.post('/api/direct-conversations', authenticate, (request, response) => {
+  const recipient = db.prepare('SELECT id, display_name FROM users WHERE display_name = ? COLLATE NOCASE').get(String(request.body?.username || '').trim());
+  if (!recipient) return response.status(404).json({ error: 'No account exists with that username.' });
+  if (recipient.id === request.user.id) return response.status(400).json({ error: 'You cannot start a direct conversation with yourself.' });
+  const [first, second] = [request.user.id, recipient.id].sort((a, b) => a - b);
+  db.prepare('INSERT OR IGNORE INTO direct_conversations (user_one_id, user_two_id) VALUES (?, ?)').run(first, second);
+  const conversation = db.prepare('SELECT * FROM direct_conversations WHERE user_one_id = ? AND user_two_id = ?').get(first, second);
+  response.status(201).json({ conversation });
+});
+
+function directConversationForUser(conversationId, userId) {
+  return db.prepare('SELECT * FROM direct_conversations WHERE id = ? AND (user_one_id = ? OR user_two_id = ?)').get(conversationId, userId, userId);
+}
+
+app.get('/api/direct-conversations/:id/messages', authenticate, (request, response) => {
+  if (!directConversationForUser(request.params.id, request.user.id)) return response.status(403).json({ error: 'You are not part of this direct conversation.' });
+  const messages = db.prepare(`SELECT direct_messages.*, users.display_name, users.role FROM direct_messages JOIN users ON users.id = direct_messages.author_id WHERE conversation_id = ? ORDER BY direct_messages.id DESC LIMIT 100`).all(request.params.id).reverse().map(messagePayload);
+  response.json({ messages });
+});
+
+app.post('/api/direct-conversations/:id/messages', authenticate, (request, response) => {
+  if (!directConversationForUser(request.params.id, request.user.id)) return response.status(403).json({ error: 'You are not part of this direct conversation.' });
+  const body = String(request.body?.body || '').trim();
+  if (!body || body.length > 2000) return response.status(400).json({ error: 'Messages must be 1 to 2,000 characters.' });
+  const result = db.prepare('INSERT INTO direct_messages (conversation_id, author_id, body) VALUES (?, ?, ?)').run(request.params.id, request.user.id, body);
+  const message = db.prepare(`SELECT direct_messages.*, users.display_name, users.role FROM direct_messages JOIN users ON users.id = direct_messages.author_id WHERE direct_messages.id = ?`).get(result.lastInsertRowid);
+  response.status(201).json({ message: messagePayload(message) });
+});
 
 app.get('/api/content', authenticate, (request, response) => {
   const items = db.prepare(`SELECT content_items.*, users.display_name AS performer_name FROM content_items JOIN users ON users.id = content_items.performer_id WHERE published_at IS NOT NULL ORDER BY published_at DESC`).all()

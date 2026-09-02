@@ -13,6 +13,7 @@ EmberFans is beginning as a real local service with an existing GitHub Pages vis
 - Performer-only content publishing API
 - Creator studio with protected image/video upload support
 - Authenticated media delivery that never exposes the media directory as a static URL
+- Communities, channels, persisted text messages, direct conversations, and moderator message removal
 - SFW photo, NSFW photo, video, and live-event content records
 - Permissioned emergency-stop API design with an audit trail
 - Rate limits and common security headers
@@ -39,6 +40,15 @@ The SQLite database is created at `data/emberfans.db` by default. It is intentio
 
 Uploads are stored outside the public static directory. The browser can request media only through the authenticated `/api/media/:contentId` endpoint after the service checks the viewer's entitlement.
 
+## Community workflow
+
+1. Sign in and open `http://127.0.0.1:3000/community.html`, or use the `#` Communities button in the dashboard rail.
+2. A performer or administrator can create a community; each new community starts with `# welcome` and `# general`.
+3. Members join a community before viewing or posting in its channels.
+4. Community owners, moderators, and administrators can add channels. Message authors and moderators can remove a message.
+
+The direct-message API is available for signed-in users. The initial community screen focuses on channels first; a dedicated inbox interface is the next client-side community enhancement.
+
 ## Current API
 
 | Method | Route | Access |
@@ -52,6 +62,13 @@ Uploads are stored outside the public static directory. The browser can request 
 | `POST` | `/api/content/:id/media` | Owning performer or administrator |
 | `GET` | `/api/media/:contentId` | Signed-in entitled viewer |
 | `POST` | `/api/device-sessions/:id/stop` | Device-session participant |
+| `GET`, `POST` | `/api/communities` | Signed-in user / performer or administrator |
+| `POST` | `/api/communities/:id/join` | Signed-in user |
+| `GET`, `POST` | `/api/communities/:id/channels` | Member / community moderator |
+| `GET`, `POST` | `/api/channels/:id/messages` | Community member |
+| `DELETE` | `/api/channel-messages/:id` | Message author or moderator |
+| `GET`, `POST` | `/api/direct-conversations` | Signed-in user |
+| `GET`, `POST` | `/api/direct-conversations/:id/messages` | Conversation participant |
 
 ## Production requirements not yet implemented
 
