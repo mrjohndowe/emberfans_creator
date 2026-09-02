@@ -5,6 +5,7 @@ const messages = document.querySelector('#messageList');
 const form = document.querySelector('#messageForm');
 let user, community, channel, sidebar, suppressChannelClickUntil = 0;
 let voiceTestStream = null;
+let liveRoom = null;
 
 const icons = { text: '#', forum: '▤', media: '▦', voice: '🔊', auditorium: '🎙' };
 const titles = { text: 'TEXT CHANNEL', forum: 'FORUM CHANNEL', media: 'MEDIA CHANNEL', voice: 'VOICE CHANNEL', auditorium: 'AUDITORIUM' };
@@ -359,14 +360,115 @@ function startVoiceTest(button, status) {
   }).catch(() => { button.disabled = false; status.textContent = 'Microphone permission was not granted.'; });
 }
 
+function leaveLiveRoom() {
+  if (!liveRoom) return;
+  liveRoom.socket?.close();
+  liveRoom.peers.forEach(peer => peer.connection.close());
+  liveRoom.stream?.getTracks().forEach(track => track.stop());
+  liveRoom = null;
+}
+
+function sendRoomSignal(targetClientId, signal) {
+  if (liveRoom?.socket?.readyState === WebSocket.OPEN) liveRoom.socket.send(JSON.stringify({ type: 'signal', targetClientId, signal }));
+}
+
+function addRemoteVideo(clientId, displayName, stream) {
+  const grid = document.querySelector('#roomVideoGrid');
+  if (!grid) return;
+  let tile = grid.querySelector(`[data-peer-video="${clientId}"]`);
+  if (!tile) {
+    tile = document.createElement('article');
+    tile.className = 'room-video-tile';
+    tile.dataset.peerVideo = clientId;
+    tile.innerHTML = `<video autoplay playsinline></video><span>${esc(displayName || 'Participant')}</span>`;
+    grid.append(tile);
+  }
+  tile.querySelector('video').srcObject = stream;
+}
+
+function createPeer(clientId, displayName, initiate = false) {
+  if (!liveRoom) return null;
+  const existing = liveRoom.peers.get(clientId);
+  if (existing?.connection) return existing.connection;
+  const connection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  const peer = { connection, displayName: existing?.displayName || displayName };
+  liveRoom.peers.set(clientId, peer);
+  liveRoom.stream?.getTracks().forEach(track => connection.addTrack(track, liveRoom.stream));
+  connection.onicecandidate = event => { if (event.candidate) sendRoomSignal(clientId, { candidate: event.candidate }); };
+  connection.ontrack = event => addRemoteVideo(clientId, displayName, event.streams[0]);
+  connection.onconnectionstatechange = () => {
+    if (['failed', 'closed', 'disconnected'].includes(connection.connectionState)) document.querySelector(`[data-peer-video="${clientId}"]`)?.remove();
+  };
+  if (initiate) connection.createOffer().then(offer => connection.setLocalDescription(offer)).then(() => sendRoomSignal(clientId, { description: connection.localDescription })).catch(() => {});
+  return connection;
+}
+
+async function handleRoomSignal(clientId, signal) {
+  if (!liveRoom) return;
+  const connection = liveRoom.peers.get(clientId)?.connection || createPeer(clientId, liveRoom.peers.get(clientId)?.displayName || 'Participant');
+  try {
+    if (signal.description) {
+      await connection.setRemoteDescription(signal.description);
+      if (signal.description.type === 'offer') {
+        const answer = await connection.createAnswer();
+        await connection.setLocalDescription(answer);
+        sendRoomSignal(clientId, { description: connection.localDescription });
+      }
+    } else if (signal.candidate) await connection.addIceCandidate(signal.candidate);
+  } catch { /* The peer can reconnect by reopening the room. */ }
+}
+
+async function enableLiveMedia() {
+  if (!liveRoom) return;
+  const status = document.querySelector('#liveRoomStatus');
+  const button = document.querySelector('#enableLiveMedia');
+  button.disabled = true;
+  status.textContent = 'Requesting microphone and camera access…';
+  try {
+    liveRoom.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    const local = document.querySelector('#localRoomVideo');
+    local.srcObject = liveRoom.stream;
+    document.querySelector('#localRoomTile')?.classList.add('active');
+    liveRoom.peers.forEach((peer, clientId) => {
+      const connection = peer.connection || createPeer(clientId, peer.displayName || 'Participant');
+      if (peer.connection) liveRoom.stream.getTracks().forEach(track => connection.addTrack(track, liveRoom.stream));
+      connection.createOffer().then(offer => connection.setLocalDescription(offer)).then(() => sendRoomSignal(clientId, { description: connection.localDescription })).catch(() => {});
+    });
+    liveRoom.socket?.send(JSON.stringify({ type: 'media-ready' }));
+    status.textContent = 'Microphone and camera are live.';
+    button.textContent = 'Mic & camera enabled';
+  } catch { button.disabled = false; status.textContent = 'Microphone/camera permission was not granted.'; }
+}
+
+function connectLiveRoom(roomChannel) {
+  leaveLiveRoom();
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${protocol}//${location.host}/ws/rooms?token=${encodeURIComponent(token)}&channelId=${roomChannel.id}`);
+  liveRoom = { channelId: roomChannel.id, socket, peers: new Map(), stream: null };
+  socket.onopen = () => { const status = document.querySelector('#liveRoomStatus'); if (status) status.textContent = 'Connected to the room. Enable your mic and camera when ready.'; };
+  socket.onmessage = event => {
+    const message = JSON.parse(event.data);
+    if (message.type === 'room-welcome') message.peers.forEach(peer => liveRoom.peers.set(peer.clientId, { displayName: peer.displayName, connection: null }));
+    if (message.type === 'peer-joined') {
+      liveRoom.peers.set(message.clientId, { displayName: message.displayName, connection: null });
+      if (liveRoom.stream) createPeer(message.clientId, message.displayName, true);
+    }
+    if (message.type === 'peer-media-ready' && liveRoom.stream) createPeer(message.clientId, liveRoom.peers.get(message.clientId)?.displayName || 'Participant', true);
+    if (message.type === 'signal') handleRoomSignal(message.clientId, message.signal);
+    if (message.type === 'peer-left') { liveRoom.peers.get(message.clientId)?.connection?.close(); liveRoom.peers.delete(message.clientId); document.querySelector(`[data-peer-video="${message.clientId}"]`)?.remove(); }
+  };
+  socket.onclose = () => { const status = document.querySelector('#liveRoomStatus'); if (status && liveRoom) status.textContent = 'Room signaling disconnected.'; };
+}
+
 function voiceDock(roomChannel, room) {
   let dock = document.querySelector('#voiceDock');
   if (!dock) { dock = document.createElement('aside'); dock.id = 'voiceDock'; document.body.append(dock); }
-  dock.innerHTML = `<strong style="display:block;color:#65d58a;font:700 13px Manrope">Voice Connected</strong><small style="display:block;color:#b6b7c2;margin:3px 0 10px">${esc(roomChannel.name)} - ${room.participants.length} participant${room.participants.length === 1 ? '' : 's'}</small><button id="voiceTestButton" style="border:0;border-radius:6px;padding:8px 10px;background:#293957;color:#d6e5ff;font:700 10px Manrope;cursor:pointer">🎙 Voice test</button><small id="voiceTestStatus" style="display:block;color:#9fa8bc;margin:7px 0 10px">Record 5 seconds, then hear it back.</small><button id="disconnectVoice" style="border:0;border-radius:6px;padding:8px 10px;background:#4a2930;color:#ffd0cb;font:700 10px Manrope;cursor:pointer">Disconnect</button>`;
-  const testButton = document.querySelector('#voiceTestButton');
+  dock.innerHTML = `<strong style="display:block;color:#65d58a;font:700 13px Manrope">Voice Connected</strong><small style="display:block;color:#b6b7c2;margin:3px 0 10px">${esc(roomChannel.name)} - ${room.participants.length} participant${room.participants.length === 1 ? '' : 's'}</small><button id="dockVoiceTestButton" style="border:0;border-radius:6px;padding:8px 10px;background:#293957;color:#d6e5ff;font:700 10px Manrope;cursor:pointer">🎙 Voice test</button><small id="voiceTestStatus" style="display:block;color:#9fa8bc;margin:7px 0 10px">Record 5 seconds, then hear it back.</small><button id="disconnectVoice" style="border:0;border-radius:6px;padding:8px 10px;background:#4a2930;color:#ffd0cb;font:700 10px Manrope;cursor:pointer">Disconnect</button>`;
+  const testButton = document.querySelector('#dockVoiceTestButton');
   testButton.onclick = () => startVoiceTest(testButton, document.querySelector('#voiceTestStatus'));
   document.querySelector('#disconnectVoice').onclick = async () => {
     stopVoiceTest();
+    leaveLiveRoom();
     await api(`/api/channels/${roomChannel.id}/join`, { method: 'DELETE' });
     dock.remove();
     document.querySelectorAll(`[data-room-members="${roomChannel.id}"]`).forEach(node => node.remove());
@@ -374,6 +476,7 @@ function voiceDock(roomChannel, room) {
 }
 
 async function open(selectedChannel) {
+  if (liveRoom && liveRoom.channelId !== selectedChannel.id) leaveLiveRoom();
   channel = selectedChannel;
   const kind = channelKind(channel);
   document.querySelector('#channelTitle').textContent = `${icons[kind] || '#'} ${channel.name}`;
@@ -394,7 +497,11 @@ async function open(selectedChannel) {
       voiceButton.after(members);
     }
     voiceDock(channel, room);
-    messages.innerHTML = `<div class="empty"><strong>Joined ${titles[channel.type].toLowerCase()}</strong><br>You are now in this room.<br><br>Use the Voice Connected panel to disconnect.</div>`;
+    messages.innerHTML = `<section class="live-room"><div class="live-room-head"><span>${channel.type === 'auditorium' ? 'AUDITORIUM' : 'VOICE ROOM'}</span><h2>${esc(channel.name)}</h2><p id="liveRoomStatus">Joining room signaling…</p></div><section id="roomVideoGrid" class="room-video-grid"><article id="localRoomTile" class="room-video-tile local"><video id="localRoomVideo" autoplay muted playsinline></video><span>You</span><em>Camera off</em></article></section><div class="live-room-actions"><button id="enableLiveMedia">Enable microphone & camera</button><button id="voiceTestButton">🎙 Voice test</button></div><p class="live-room-note">Your microphone and camera stay off until you choose to enable them. Browser permission is required.</p></section>`;
+    document.querySelector('#enableLiveMedia').onclick = enableLiveMedia;
+    const testButton = document.querySelector('#voiceTestButton');
+    testButton.onclick = () => startVoiceTest(testButton, document.querySelector('#liveRoomStatus'));
+    connectLiveRoom(channel);
     return;
   }
   if (kind === 'media') {

@@ -10,6 +10,7 @@ const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
+const { WebSocketServer, WebSocket } = require('ws');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -692,4 +693,53 @@ app.use((error, _request, response, _next) => {
   response.status(500).json({ error: 'An unexpected server error occurred.' });
 });
 
-app.listen(port, () => console.log(`EmberFans service is listening on http://127.0.0.1:${port}`));
+const httpServer = app.listen(port, () => console.log(`EmberFans service is listening on http://127.0.0.1:${port}`));
+const roomSockets = new Map();
+const roomWebSocketServer = new WebSocketServer({ noServer: true });
+
+function sendRoomEvent(socket, event) {
+  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
+}
+
+function roomPeers(channelId) {
+  return roomSockets.get(channelId) || new Set();
+}
+
+httpServer.on('upgrade', (request, socket, head) => {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  if (url.pathname !== '/ws/rooms') return socket.destroy();
+  try {
+    const claims = jwt.verify(url.searchParams.get('token') || '', jwtSecret, { issuer: 'emberfans', audience: 'emberfans-web' });
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(claims.sub);
+    const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(Number(url.searchParams.get('channelId')));
+    if (!user || !channel || !['voice', 'auditorium'].includes(channel.type) || !communityMembership(channel.community_id, user.id)) throw Error('Unauthorized room connection.');
+    roomWebSocketServer.handleUpgrade(request, socket, head, client => {
+      client.roomChannelId = channel.id;
+      client.roomClientId = crypto.randomUUID();
+      client.roomUser = user;
+      roomWebSocketServer.emit('connection', client);
+    });
+  } catch { socket.destroy(); }
+});
+
+roomWebSocketServer.on('connection', client => {
+  const peers = roomPeers(client.roomChannelId);
+  sendRoomEvent(client, { type: 'room-welcome', clientId: client.roomClientId, peers: [...peers].map(peer => ({ clientId: peer.roomClientId, displayName: peer.roomUser.display_name })) });
+  peers.forEach(peer => sendRoomEvent(peer, { type: 'peer-joined', clientId: client.roomClientId, displayName: client.roomUser.display_name }));
+  peers.add(client);
+  roomSockets.set(client.roomChannelId, peers);
+  client.on('message', raw => {
+    try {
+      const message = JSON.parse(String(raw));
+      if (!['signal', 'media-ready'].includes(message.type)) return;
+      if (message.type === 'media-ready') return peers.forEach(peer => { if (peer !== client) sendRoomEvent(peer, { type: 'peer-media-ready', clientId: client.roomClientId }); });
+      const target = [...peers].find(peer => peer.roomClientId === message.targetClientId);
+      if (target) sendRoomEvent(target, { type: 'signal', clientId: client.roomClientId, signal: message.signal });
+    } catch { /* Ignore malformed signaling packets. */ }
+  });
+  client.on('close', () => {
+    peers.delete(client);
+    peers.forEach(peer => sendRoomEvent(peer, { type: 'peer-left', clientId: client.roomClientId }));
+    if (!peers.size) roomSockets.delete(client.roomChannelId);
+  });
+});
