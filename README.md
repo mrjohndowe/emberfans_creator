@@ -49,6 +49,7 @@ Uploads are stored outside the public static directory. The browser can request 
 5. Text channels store messages. Forum channels store titled discussion posts. Clicking a voice or auditorium channel joins that room, shows participants beneath it in the sidebar, and provides a Voice Connected disconnect panel until a real-time audio provider is connected.
 6. Community moderators can right-click category headers or channels to open the typed-channel creation modal or create a category. Drag a channel to another category to persist its sidebar placement.
 7. Community moderators can delete a channel from its right-click menu only after typing the channel's exact name. This permanently removes the channel, its messages or forum posts, and its active room entries.
+8. Community moderators can delete a category from its right-click menu only after typing the category's exact name. Its channels are moved to another category so their messages and forum posts remain available.
 
 The direct-message API is available for signed-in users. The initial community screen focuses on channels first; a dedicated inbox interface is the next client-side community enhancement.
 
@@ -68,6 +69,7 @@ The direct-message API is available for signed-in users. The initial community s
 | `GET`, `POST` | `/api/communities` | Signed-in user / performer or administrator |
 | `POST` | `/api/communities/:id/join` | Signed-in user |
 | `GET`, `POST` | `/api/communities/:id/channels` | Member / community moderator |
+| `DELETE` | `/api/communities/:communityId/categories/:categoryId` | Community moderator |
 | `DELETE` | `/api/channels/:id` | Community moderator |
 | `GET`, `POST` | `/api/channels/:id/messages` | Community member |
 | `DELETE` | `/api/channel-messages/:id` | Message author or moderator |

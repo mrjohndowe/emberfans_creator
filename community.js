@@ -63,13 +63,28 @@ function openCreateModal(category, type = 'text') {
   document.querySelector('#channelModalName').focus();
 }
 
+async function deleteCategory(category) {
+  const enteredName = prompt(`This deletes the ${category.name} category. Its channels will be moved safely to another category.\n\nType ${category.name} to confirm.`);
+  if (enteredName === null) return;
+  if (enteredName.trim() !== category.name) {
+    alert('The category name did not match. Nothing was deleted.');
+    return;
+  }
+  try {
+    const result = await api(`/api/communities/${community.id}/categories/${category.id}`, { method: 'DELETE' });
+    alert(`${category.name} was deleted. ${result.movedChannelCount} channel${result.movedChannelCount === 1 ? '' : 's'} moved to ${result.fallbackCategory}.`);
+    await select(community);
+  } catch (error) { alert(error.message); }
+}
+
 function categoryActions(category) {
   return [
     { label: 'Create Text Channel', action: () => openCreateModal(category, 'text') },
     { label: 'Create Forum Channel', action: () => openCreateModal(category, 'forum') },
     { label: 'Create Voice Channel', action: () => openCreateModal(category, 'voice') },
     { label: 'Create Auditorium', action: () => openCreateModal(category, 'auditorium') },
-    { label: 'Create Category', action: createCategory }
+    { label: 'Create Category', action: createCategory },
+    { label: 'Delete Category', danger: true, action: () => deleteCategory(category) }
   ];
 }
 

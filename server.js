@@ -100,6 +100,14 @@ db.exec(`
     position INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS community_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    community_id INTEGER NOT NULL REFERENCES communities(id),
+    actor_id INTEGER NOT NULL REFERENCES users(id),
+    action TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
   CREATE TABLE IF NOT EXISTS channel_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     channel_id INTEGER NOT NULL REFERENCES channels(id),
@@ -219,6 +227,10 @@ function communityModerator(communityId, user) {
   return user.role === 'admin' || membership?.role === 'owner' || membership?.role === 'moderator';
 }
 
+function communityAudit(communityId, actorId, action, details = {}) {
+  db.prepare('INSERT INTO community_audit_log (community_id, actor_id, action, details) VALUES (?, ?, ?, ?)').run(communityId, actorId, action, JSON.stringify(details));
+}
+
 function messagePayload(message) {
   return { id: message.id, body: message.body, createdAt: message.created_at, author: { id: message.author_id, username: message.display_name, role: message.role } };
 }
@@ -296,6 +308,29 @@ app.post('/api/communities/:id/categories', authenticate, (request, response) =>
   const position = db.prepare('SELECT COALESCE(MAX(position), -1) AS value FROM channel_categories WHERE community_id = ?').get(request.params.id).value + 1;
   const result = db.prepare('INSERT INTO channel_categories (community_id, name, position) VALUES (?, ?, ?)').run(request.params.id, name, position);
   response.status(201).json({ category: db.prepare('SELECT * FROM channel_categories WHERE id = ?').get(result.lastInsertRowid) });
+});
+
+app.delete('/api/communities/:communityId/categories/:categoryId', authenticate, (request, response) => {
+  const communityId = Number(request.params.communityId);
+  const categoryId = Number(request.params.categoryId);
+  if (!communityModerator(communityId, request.user)) return response.status(403).json({ error: 'Only community moderators can delete categories.' });
+  const category = db.prepare('SELECT * FROM channel_categories WHERE id = ? AND community_id = ?').get(categoryId, communityId);
+  if (!category) return response.status(404).json({ error: 'Category was not found.' });
+  const result = db.transaction(() => {
+    let fallback = db.prepare('SELECT * FROM channel_categories WHERE community_id = ? AND id != ? ORDER BY position, id LIMIT 1').get(communityId, categoryId);
+    if (!fallback) {
+      const created = db.prepare('INSERT INTO channel_categories (community_id, name, position) VALUES (?, ?, 0)').run(communityId, 'GENERAL');
+      fallback = db.prepare('SELECT * FROM channel_categories WHERE id = ?').get(created.lastInsertRowid);
+    }
+    const movedChannels = db.prepare('SELECT id FROM channels WHERE community_id = ? AND category_id = ? ORDER BY position, id').all(communityId, categoryId);
+    let nextPosition = db.prepare('SELECT COALESCE(MAX(position), -1) AS value FROM channels WHERE community_id = ? AND category_id = ?').get(communityId, fallback.id).value + 1;
+    const moveChannel = db.prepare('UPDATE channels SET category_id = ?, position = ? WHERE id = ?');
+    movedChannels.forEach(item => moveChannel.run(fallback.id, nextPosition++, item.id));
+    db.prepare('DELETE FROM channel_categories WHERE id = ?').run(categoryId);
+    db.prepare('SELECT id FROM channel_categories WHERE community_id = ? ORDER BY position, id').all(communityId).forEach((item, position) => db.prepare('UPDATE channel_categories SET position = ? WHERE id = ?').run(position, item.id));
+    return { fallbackCategory: fallback.name, movedChannelCount: movedChannels.length };
+  })();
+  response.json(result);
 });
 
 app.put('/api/communities/:id/sidebar', authenticate, (request, response) => {
