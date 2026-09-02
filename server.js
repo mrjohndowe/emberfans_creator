@@ -88,6 +88,8 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     community_id INTEGER NOT NULL REFERENCES communities(id),
     name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'text' CHECK(type IN ('text', 'forum', 'voice', 'auditorium')),
+    description TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (community_id, name)
   );
@@ -113,12 +115,23 @@ db.exec(`
     body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS forum_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL REFERENCES channels(id),
+    author_id INTEGER NOT NULL REFERENCES users(id),
+    title TEXT NOT NULL CHECK(length(title) BETWEEN 2 AND 140),
+    body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 4000),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_display_name_unique ON users(display_name COLLATE NOCASE)');
 
 const contentColumns = db.prepare('PRAGMA table_info(content_items)').all().map(column => column.name);
 if (!contentColumns.includes('media_path')) db.exec('ALTER TABLE content_items ADD COLUMN media_path TEXT');
 if (!contentColumns.includes('media_mime_type')) db.exec('ALTER TABLE content_items ADD COLUMN media_mime_type TEXT');
+const channelColumns = db.prepare('PRAGMA table_info(channels)').all().map(column => column.name);
+if (!channelColumns.includes('type')) db.exec("ALTER TABLE channels ADD COLUMN type TEXT NOT NULL DEFAULT 'text' CHECK(type IN ('text', 'forum', 'voice', 'auditorium'))");
+if (!channelColumns.includes('description')) db.exec("ALTER TABLE channels ADD COLUMN description TEXT NOT NULL DEFAULT ''");
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -255,8 +268,11 @@ app.get('/api/communities/:id/channels', authenticate, (request, response) => {
 app.post('/api/communities/:id/channels', authenticate, (request, response) => {
   if (!communityModerator(request.params.id, request.user)) return response.status(403).json({ error: 'Only community moderators can create channels.' });
   const name = String(request.body?.name || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/(^-|-$)/g, '');
+  const type = String(request.body?.type || 'text');
+  const description = String(request.body?.description || '').trim();
   if (name.length < 2 || name.length > 48) return response.status(400).json({ error: 'Channel names must be 2 to 48 lowercase characters.' });
-  try { const result = db.prepare('INSERT INTO channels (community_id, name) VALUES (?, ?)').run(request.params.id, name); response.status(201).json({ channel: db.prepare('SELECT * FROM channels WHERE id = ?').get(result.lastInsertRowid) }); }
+  if (!['text', 'forum', 'voice', 'auditorium'].includes(type)) return response.status(400).json({ error: 'Choose a valid channel type.' });
+  try { const result = db.prepare('INSERT INTO channels (community_id, name, type, description) VALUES (?, ?, ?, ?)').run(request.params.id, name, type, description.slice(0, 240)); response.status(201).json({ channel: db.prepare('SELECT * FROM channels WHERE id = ?').get(result.lastInsertRowid) }); }
   catch (error) { if (String(error.message).includes('UNIQUE')) return response.status(409).json({ error: 'That channel already exists.' }); throw error; }
 });
 
@@ -272,11 +288,33 @@ app.post('/api/channels/:id/messages', authenticate, (request, response) => {
   const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
   const body = String(request.body?.body || '').trim();
   if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
+  if (channel.type !== 'text') return response.status(400).json({ error: 'Use the dedicated post or live-room experience for this channel type.' });
   if (!communityMembership(channel.community_id, request.user.id)) return response.status(403).json({ error: 'Join this community before posting.' });
   if (!body || body.length > 2000) return response.status(400).json({ error: 'Messages must be 1 to 2,000 characters.' });
   const result = db.prepare('INSERT INTO channel_messages (channel_id, author_id, body) VALUES (?, ?, ?)').run(channel.id, request.user.id, body);
   const message = db.prepare(`SELECT channel_messages.*, users.display_name, users.role FROM channel_messages JOIN users ON users.id = channel_messages.author_id WHERE channel_messages.id = ?`).get(result.lastInsertRowid);
   response.status(201).json({ message: messagePayload(message) });
+});
+
+app.get('/api/channels/:id/forum-posts', authenticate, (request, response) => {
+  const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
+  if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
+  if (channel.type !== 'forum') return response.status(400).json({ error: 'This channel is not a forum.' });
+  if (!communityMembership(channel.community_id, request.user.id)) return response.status(403).json({ error: 'Join this community before viewing posts.' });
+  const posts = db.prepare(`SELECT forum_posts.*, users.display_name, users.role FROM forum_posts JOIN users ON users.id = forum_posts.author_id WHERE channel_id = ? ORDER BY forum_posts.id DESC LIMIT 100`).all(channel.id).map(post => ({ id: post.id, title: post.title, body: post.body, createdAt: post.created_at, author: { id: post.author_id, username: post.display_name, role: post.role } }));
+  response.json({ posts });
+});
+
+app.post('/api/channels/:id/forum-posts', authenticate, (request, response) => {
+  const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
+  const title = String(request.body?.title || '').trim();
+  const body = String(request.body?.body || '').trim();
+  if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
+  if (channel.type !== 'forum') return response.status(400).json({ error: 'This channel is not a forum.' });
+  if (!communityMembership(channel.community_id, request.user.id)) return response.status(403).json({ error: 'Join this community before posting.' });
+  if (title.length < 2 || title.length > 140 || body.length < 1 || body.length > 4000) return response.status(400).json({ error: 'Forum posts need a 2 to 140 character title and a message up to 4,000 characters.' });
+  const result = db.prepare('INSERT INTO forum_posts (channel_id, author_id, title, body) VALUES (?, ?, ?, ?)').run(channel.id, request.user.id, title, body);
+  response.status(201).json({ post: db.prepare('SELECT * FROM forum_posts WHERE id = ?').get(result.lastInsertRowid) });
 });
 
 app.delete('/api/channel-messages/:id', authenticate, (request, response) => {
