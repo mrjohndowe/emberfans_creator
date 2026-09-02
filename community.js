@@ -4,6 +4,7 @@ const channels = document.querySelector('#channelList');
 const messages = document.querySelector('#messageList');
 const form = document.querySelector('#messageForm');
 let user, community, channel, sidebar, suppressChannelClickUntil = 0;
+let voiceTestStream = null;
 
 const icons = { text: '#', forum: '[]', voice: '🔊', auditorium: '🎙' };
 const titles = { text: 'TEXT CHANNEL', forum: 'FORUM CHANNEL', voice: 'VOICE CHANNEL', auditorium: 'AUDITORIUM' };
@@ -150,11 +151,43 @@ function render(items, forum) {
   ).join('') : '<p class="empty">Nothing here yet.</p>';
 }
 
+function stopVoiceTest() {
+  if (voiceTestStream) voiceTestStream.getTracks().forEach(track => track.stop());
+  voiceTestStream = null;
+}
+
+function startVoiceTest(button, status) {
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    status.textContent = 'Microphone testing is not supported in this browser.';
+    return;
+  }
+  button.disabled = true;
+  status.textContent = 'Listening for 5 seconds…';
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    voiceTestStream = stream;
+    const recorder = new MediaRecorder(stream);
+    const chunks = [];
+    recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+    recorder.onstop = () => {
+      stopVoiceTest();
+      const playback = new Audio(URL.createObjectURL(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })));
+      status.textContent = 'Recording complete. Playing back after a short delay…';
+      setTimeout(() => playback.play().then(() => { status.textContent = 'Playback finished. Ready for another test.'; }).catch(() => { status.textContent = 'Playback was blocked. Press the test button again.'; }), 900);
+      button.disabled = false;
+    };
+    recorder.start();
+    setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 5000);
+  }).catch(() => { button.disabled = false; status.textContent = 'Microphone permission was not granted.'; });
+}
+
 function voiceDock(roomChannel, room) {
   let dock = document.querySelector('#voiceDock');
   if (!dock) { dock = document.createElement('aside'); dock.id = 'voiceDock'; document.body.append(dock); }
-  dock.innerHTML = `<strong style="display:block;color:#65d58a;font:700 13px Manrope">Voice Connected</strong><small style="display:block;color:#b6b7c2;margin:3px 0 10px">${esc(roomChannel.name)} - ${room.participants.length} participant${room.participants.length === 1 ? '' : 's'}</small><button id="disconnectVoice" style="border:0;border-radius:6px;padding:8px 10px;background:#4a2930;color:#ffd0cb;font:700 10px Manrope;cursor:pointer">Disconnect</button>`;
+  dock.innerHTML = `<strong style="display:block;color:#65d58a;font:700 13px Manrope">Voice Connected</strong><small style="display:block;color:#b6b7c2;margin:3px 0 10px">${esc(roomChannel.name)} - ${room.participants.length} participant${room.participants.length === 1 ? '' : 's'}</small><button id="voiceTestButton" style="border:0;border-radius:6px;padding:8px 10px;background:#293957;color:#d6e5ff;font:700 10px Manrope;cursor:pointer">🎙 Voice test</button><small id="voiceTestStatus" style="display:block;color:#9fa8bc;margin:7px 0 10px">Record 5 seconds, then hear it back.</small><button id="disconnectVoice" style="border:0;border-radius:6px;padding:8px 10px;background:#4a2930;color:#ffd0cb;font:700 10px Manrope;cursor:pointer">Disconnect</button>`;
+  const testButton = document.querySelector('#voiceTestButton');
+  testButton.onclick = () => startVoiceTest(testButton, document.querySelector('#voiceTestStatus'));
   document.querySelector('#disconnectVoice').onclick = async () => {
+    stopVoiceTest();
     await api(`/api/channels/${roomChannel.id}/join`, { method: 'DELETE' });
     dock.remove();
     document.querySelectorAll(`[data-room-members="${roomChannel.id}"]`).forEach(node => node.remove());
