@@ -47,6 +47,7 @@ Uploads are stored outside the public static directory. The browser can request 
 3. Members join a community before viewing or posting in its channels.
 4. Community owners, moderators, and administrators can add `text`, `forum`, `voice`, and `auditorium` channels, each with an optional descriptive header.
 5. Text channels store messages. Forum channels store titled discussion posts. Voice and auditorium channels preserve room type, permissions, and headers until a real-time audio provider is connected.
+6. Community moderators can right-click category headers or channels to create a typed channel or a category. Drag a channel to another category to persist its sidebar placement.
 
 The direct-message API is available for signed-in users. The initial community screen focuses on channels first; a dedicated inbox interface is the next client-side community enhancement.
 

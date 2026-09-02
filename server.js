@@ -93,6 +93,13 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (community_id, name)
   );
+  CREATE TABLE IF NOT EXISTS channel_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    community_id INTEGER NOT NULL REFERENCES communities(id),
+    name TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
   CREATE TABLE IF NOT EXISTS channel_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     channel_id INTEGER NOT NULL REFERENCES channels(id),
@@ -132,6 +139,16 @@ if (!contentColumns.includes('media_mime_type')) db.exec('ALTER TABLE content_it
 const channelColumns = db.prepare('PRAGMA table_info(channels)').all().map(column => column.name);
 if (!channelColumns.includes('type')) db.exec("ALTER TABLE channels ADD COLUMN type TEXT NOT NULL DEFAULT 'text' CHECK(type IN ('text', 'forum', 'voice', 'auditorium'))");
 if (!channelColumns.includes('description')) db.exec("ALTER TABLE channels ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+if (!channelColumns.includes('category_id')) db.exec('ALTER TABLE channels ADD COLUMN category_id INTEGER REFERENCES channel_categories(id)');
+if (!channelColumns.includes('position')) db.exec('ALTER TABLE channels ADD COLUMN position INTEGER NOT NULL DEFAULT 0');
+db.prepare('SELECT id FROM communities').all().forEach(community => {
+  let category = db.prepare('SELECT id FROM channel_categories WHERE community_id = ? ORDER BY position, id LIMIT 1').get(community.id);
+  if (!category) {
+    const result = db.prepare('INSERT INTO channel_categories (community_id, name, position) VALUES (?, ?, ?)').run(community.id, 'GENERAL', 0);
+    category = { id: result.lastInsertRowid };
+  }
+  db.prepare('UPDATE channels SET category_id = ? WHERE community_id = ? AND category_id IS NULL').run(category.id, community.id);
+});
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -243,7 +260,8 @@ app.post('/api/communities', authenticate, requireRole('performer', 'admin'), (r
     const result = db.transaction(() => {
       const created = db.prepare('INSERT INTO communities (owner_id, name, slug, description) VALUES (?, ?, ?, ?)').run(request.user.id, name.trim(), slug, String(description).trim());
       db.prepare("INSERT INTO community_members (community_id, user_id, role) VALUES (?, ?, 'owner')").run(created.lastInsertRowid, request.user.id);
-      db.prepare('INSERT INTO channels (community_id, name) VALUES (?, ?), (?, ?)').run(created.lastInsertRowid, 'welcome', created.lastInsertRowid, 'general');
+      const category = db.prepare('INSERT INTO channel_categories (community_id, name, position) VALUES (?, ?, ?)').run(created.lastInsertRowid, 'GENERAL', 0);
+      db.prepare('INSERT INTO channels (community_id, name, category_id, position) VALUES (?, ?, ?, ?), (?, ?, ?, ?)').run(created.lastInsertRowid, 'welcome', category.lastInsertRowid, 0, created.lastInsertRowid, 'general', category.lastInsertRowid, 1);
       return created.lastInsertRowid;
     })();
     response.status(201).json({ community: db.prepare('SELECT * FROM communities WHERE id = ?').get(result) });
@@ -262,7 +280,29 @@ app.post('/api/communities/:id/join', authenticate, (request, response) => {
 
 app.get('/api/communities/:id/channels', authenticate, (request, response) => {
   if (!communityMembership(request.params.id, request.user.id)) return response.status(403).json({ error: 'Join this community before viewing its channels.' });
-  response.json({ channels: db.prepare('SELECT * FROM channels WHERE community_id = ? ORDER BY name').all(request.params.id) });
+  response.json({ categories: db.prepare('SELECT * FROM channel_categories WHERE community_id = ? ORDER BY position, id').all(request.params.id), channels: db.prepare('SELECT * FROM channels WHERE community_id = ? ORDER BY category_id, position, id').all(request.params.id) });
+});
+
+app.post('/api/communities/:id/categories', authenticate, (request, response) => {
+  if (!communityModerator(request.params.id, request.user)) return response.status(403).json({ error: 'Only community moderators can create categories.' });
+  const name = String(request.body?.name || '').trim().toUpperCase();
+  if (name.length < 2 || name.length > 48) return response.status(400).json({ error: 'Category names must be 2 to 48 characters.' });
+  const position = db.prepare('SELECT COALESCE(MAX(position), -1) AS value FROM channel_categories WHERE community_id = ?').get(request.params.id).value + 1;
+  const result = db.prepare('INSERT INTO channel_categories (community_id, name, position) VALUES (?, ?, ?)').run(request.params.id, name, position);
+  response.status(201).json({ category: db.prepare('SELECT * FROM channel_categories WHERE id = ?').get(result.lastInsertRowid) });
+});
+
+app.put('/api/communities/:id/sidebar', authenticate, (request, response) => {
+  if (!communityModerator(request.params.id, request.user)) return response.status(403).json({ error: 'Only community moderators can reorder the sidebar.' });
+  const categories = Array.isArray(request.body?.categories) ? request.body.categories : [];
+  const channels = Array.isArray(request.body?.channels) ? request.body.channels : [];
+  db.transaction(() => {
+    const updateCategory = db.prepare('UPDATE channel_categories SET position = ? WHERE id = ? AND community_id = ?');
+    const updateChannel = db.prepare('UPDATE channels SET category_id = ?, position = ? WHERE id = ? AND community_id = ?');
+    categories.forEach((category, position) => updateCategory.run(position, Number(category.id), request.params.id));
+    channels.forEach(channel => updateChannel.run(channel.categoryId ? Number(channel.categoryId) : null, Number(channel.position), Number(channel.id), request.params.id));
+  })();
+  response.sendStatus(204);
 });
 
 app.post('/api/communities/:id/channels', authenticate, (request, response) => {
@@ -272,7 +312,10 @@ app.post('/api/communities/:id/channels', authenticate, (request, response) => {
   const description = String(request.body?.description || '').trim();
   if (name.length < 2 || name.length > 48) return response.status(400).json({ error: 'Channel names must be 2 to 48 lowercase characters.' });
   if (!['text', 'forum', 'voice', 'auditorium'].includes(type)) return response.status(400).json({ error: 'Choose a valid channel type.' });
-  try { const result = db.prepare('INSERT INTO channels (community_id, name, type, description) VALUES (?, ?, ?, ?)').run(request.params.id, name, type, description.slice(0, 240)); response.status(201).json({ channel: db.prepare('SELECT * FROM channels WHERE id = ?').get(result.lastInsertRowid) }); }
+  const categoryId = request.body?.categoryId ? Number(request.body.categoryId) : null;
+  if (categoryId && !db.prepare('SELECT id FROM channel_categories WHERE id = ? AND community_id = ?').get(categoryId, request.params.id)) return response.status(400).json({ error: 'Choose a category in this community.' });
+  const position = db.prepare('SELECT COALESCE(MAX(position), -1) AS value FROM channels WHERE community_id = ? AND category_id IS ?').get(request.params.id, categoryId).value + 1;
+  try { const result = db.prepare('INSERT INTO channels (community_id, name, type, description, category_id, position) VALUES (?, ?, ?, ?, ?, ?)').run(request.params.id, name, type, description.slice(0, 240), categoryId, position); response.status(201).json({ channel: db.prepare('SELECT * FROM channels WHERE id = ?').get(result.lastInsertRowid) }); }
   catch (error) { if (String(error.message).includes('UNIQUE')) return response.status(409).json({ error: 'That channel already exists.' }); throw error; }
 });
 
