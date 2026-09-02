@@ -1,13 +1,264 @@
-const token=sessionStorage.getItem('emberfansToken'),list=document.querySelector('#communityList'),channels=document.querySelector('#channelList'),messages=document.querySelector('#messageList'),form=document.querySelector('#messageForm');let user,community,channel,sidebar;
-const icons={text:'#',forum:'[]',voice:'()',auditorium:'()'},titles={text:'TEXT CHANNEL',forum:'FORUM CHANNEL',voice:'VOICE CHANNEL',auditorium:'AUDITORIUM'};
-const menu=document.createElement('div');menu.style.cssText='display:none;position:fixed;z-index:20;min-width:190px;padding:7px;background:#26272f;border:1px solid #3b3d49;border-radius:7px;box-shadow:0 12px 35px #0008';document.body.append(menu);document.addEventListener('click',()=>menu.style.display='none');
-const channelModal=document.createElement('div');channelModal.style.cssText='display:none;position:fixed;inset:0;z-index:30;place-items:center;background:#08090dbb';channelModal.innerHTML='<form style="width:min(380px,calc(100% - 30px));padding:24px;background:#20212a;border:1px solid #40424e;border-radius:10px;display:grid;gap:14px"><strong id="channelModalTitle" style="font-size:18px">Create Channel</strong><label style="display:grid;gap:6px;font-size:11px">Channel name<input id="channelModalName" maxlength="48" required style="padding:10px;border:1px solid #444651;border-radius:6px;background:#13141b;color:#fff"></label><label style="display:grid;gap:6px;font-size:11px">Channel type<select id="channelModalType" style="padding:10px;border:1px solid #444651;border-radius:6px;background:#13141b;color:#fff"><option value="text">Text channel</option><option value="forum">Forum channel</option><option value="voice">Voice channel</option><option value="auditorium">Auditorium</option></select></label><div style="display:flex;justify-content:end;gap:8px"><button type="button" id="channelModalCancel" class="secondary-button">Cancel</button><button class="primary-button">Create channel</button></div></form>';document.body.append(channelModal);
-function voiceDock(c,room){let dock=document.querySelector('#voiceDock');if(!dock){dock=document.createElement('aside');dock.id='voiceDock';dock.style.cssText='position:fixed;z-index:15;left:12px;bottom:12px;width:235px;padding:13px;background:#20212a;border:1px solid #343642;border-radius:9px;box-shadow:0 10px 28px #0008';document.body.append(dock)}dock.innerHTML=`<strong style="display:block;color:#65d58a;font:700 13px Manrope">Voice Connected</strong><small style="display:block;color:#b6b7c2;margin:3px 0 10px">${esc(c.name)} - ${room.participants.length} participant${room.participants.length===1?'':'s'}</small><button id="disconnectVoice" style="border:0;border-radius:6px;padding:8px 10px;background:#4a2930;color:#ffd0cb;font:700 10px Manrope;cursor:pointer">Disconnect</button>`;document.querySelector('#disconnectVoice').onclick=async()=>{await api(`/api/channels/${c.id}/join`,{method:'DELETE'});dock.remove();document.querySelectorAll(`[data-room-members="${c.id}"]`).forEach(x=>x.remove())}}
-async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',...(opt.headers||{})}}),b=r.status===204?{}:await r.json();if(!r.ok)throw Error(b.error||'Request failed.');return b}function esc(x){const n=document.createElement('i');n.textContent=x;return n.innerHTML}function canEdit(){return user&&(['owner','moderator'].includes(community?.member_role)||user.role==='admin')}function ctx(e,items){e.preventDefault();menu.innerHTML='';items.forEach(i=>{const b=document.createElement('button');b.textContent=i.label;b.style.cssText='display:block;width:100%;border:0;background:transparent;color:'+(i.danger?'#ff807d':'#eee')+';padding:9px 10px;text-align:left;border-radius:4px;font:600 12px Manrope;cursor:pointer';b.onclick=()=>{menu.style.display='none';i.action()};menu.append(b)});menu.style.left=`${e.clientX}px`;menu.style.top=`${e.clientY}px`;menu.style.display='block'}function render(items,forum){messages.innerHTML=items.length?items.map(x=>forum?`<article style="background:#1a1b25;border:1px solid #323442;border-radius:9px;padding:15px"><h3>${esc(x.title)}</h3><small>${esc(x.author.username)} - ${new Date(x.createdAt).toLocaleString()}</small><p>${esc(x.body)}</p></article>`:`<article class="community-message"><span class="avatar">${esc(x.author.username.slice(0,2))}</span><p><strong>${esc(x.author.username)}</strong><time>${new Date(x.createdAt).toLocaleString()}</time><br>${esc(x.body)}</p></article>`).join(''):'<p class="empty">Nothing here yet.</p>'}
-async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',...(opt.headers||{})}}),b=r.status===204?{}:await r.json();if(!r.ok)throw Error(b.error||'Request failed.');return b}function esc(x){const n=document.createElement('i');n.textContent=x;return n.innerHTML}function canEdit(){return user&&(['owner','moderator'].includes(community?.member_role)||user.role==='admin')}function ctx(e,items){e.preventDefault();menu.innerHTML='';items.forEach(i=>{const b=document.createElement('button');b.textContent=i.label;b.style.cssText='display:block;width:100%;border:0;background:transparent;color:'+(i.danger?'#ff807d':'#eee')+';padding:9px 10px;text-align:left;border-radius:4px;font:600 12px Manrope;cursor:pointer';b.onclick=()=>{menu.style.display='none';i.action()};menu.append(b)});menu.style.left=`${e.clientX}px`;menu.style.top=`${e.clientY}px`;menu.style.display='block'}function sidebarMenu(e){if(!canEdit()||!sidebar?.categories?.length)return;const cat=sidebar.categories[0];ctx(e,[{label:'Create Text Channel',action:()=>promptCreate(cat,'text')},{label:'Create Forum Channel',action:()=>promptCreate(cat,'forum')},{label:'Create Voice Channel',action:()=>promptCreate(cat,'voice')},{label:'Create Auditorium',action:()=>promptCreate(cat,'auditorium')},{label:'Create Category',action:createCategory}])}document.querySelector('.community-side').addEventListener('contextmenu',e=>{if(e.target.closest('#channelList button,#channelList h2'))return;sidebarMenu(e)});function render(items,forum){messages.innerHTML=items.length?items.map(x=>forum?`<article style="background:#1a1b25;border:1px solid #323442;border-radius:9px;padding:15px"><h3>${esc(x.title)}</h3><small>${esc(x.author.username)} - ${new Date(x.createdAt).toLocaleString()}</small><p>${esc(x.body)}</p></article>`:`<article class="community-message"><span class="avatar">${esc(x.author.username.slice(0,2))}</span><p><strong>${esc(x.author.username)}</strong><time>${new Date(x.createdAt).toLocaleString()}</time><br>${esc(x.body)}</p></article>`).join(''):'<p class="empty">Nothing here yet.</p>'}
-async function open(c){channel=c;document.querySelector('#channelTitle').textContent=`${icons[c.type]||'#'} ${c.name}`;document.querySelector('#channelSubtitle').textContent=c.description||community.name;const h=document.querySelector('#channelType')||(()=>{const e=document.createElement('span');e.id='channelType';e.style.cssText='display:block;color:#ff9b90;font:700 9px DM Mono;letter-spacing:1px;margin-bottom:4px';document.querySelector('.community-head div').prepend(e);return e})();h.textContent=titles[c.type];if(['voice','auditorium'].includes(c.type)){form.hidden=true;await api(`/api/channels/${c.id}/join`,{method:'POST'});const room=await api(`/api/channels/${c.id}/participants`);document.querySelectorAll(`[data-room-members]`).forEach(x=>x.remove());const voiceButton=channels.querySelector(`[data-id="${c.id}"]`);if(voiceButton){const members=document.createElement('div');members.dataset.roomMembers=c.id;members.style.cssText='padding:2px 8px 7px 27px;color:#c3c4cd;font:11px Manrope;display:grid;gap:5px';members.innerHTML=room.participants.map(p=>`<span style="display:flex;gap:6px;align-items:center"><i style="width:7px;height:7px;border-radius:50%;background:#5bd486;display:inline-block"></i>${esc(p.display_name)}</span>`).join('');voiceButton.after(members)}voiceDock(c,room);messages.innerHTML=`<div class="empty"><strong>Joined ${titles[c.type].toLowerCase()}</strong><br>${c.description||'You are now in this room.'}<br><br>Use the Voice Connected panel to disconnect.</div>`;return}form.hidden=false;const r=await api(`/api/channels/${c.id}/${c.type==='forum'?'forum-posts':'messages'}`);render(c.type==='forum'?r.posts:r.messages,c.type==='forum')}
-async function saveOrder(){const cats=sidebar.categories.map(c=>({id:c.id})),ch=[];sidebar.categories.forEach(c=>sidebar.channels.filter(x=>x.category_id===c.id).sort((a,b)=>a.position-b.position).forEach((x,p)=>ch.push({id:x.id,categoryId:c.id,position:p})));await api(`/api/communities/${community.id}/sidebar`,{method:'PUT',body:JSON.stringify({categories:cats,channels:ch})})}
-function draw(){channels.innerHTML='';sidebar.categories.forEach(cat=>{const section=document.createElement('section');const head=document.createElement('h2');head.textContent=cat.name;head.style.cursor='context-menu';head.oncontextmenu=e=>canEdit()&&ctx(e,[{label:'Create Text Channel',action:()=>promptCreate(cat,'text')},{label:'Create Forum Channel',action:()=>promptCreate(cat,'forum')},{label:'Create Voice Channel',action:()=>promptCreate(cat,'voice')},{label:'Create Auditorium',action:()=>promptCreate(cat,'auditorium')},{label:'Create Category',action:createCategory}]);section.append(head);const group=document.createElement('div');group.dataset.category=cat.id;group.ondragover=e=>{e.preventDefault();e.dataTransfer.dropEffect='move'};group.ondrop=async e=>{e.preventDefault();const id=+e.dataTransfer.getData('channel'),moved=sidebar.channels.find(x=>x.id===id);if(!moved)return;const target=e.target.closest('button[data-id]'),targetId=target?+target.dataset.id:null;moved.category_id=cat.id;const destination=sidebar.channels.filter(x=>x.category_id===cat.id&&x.id!==id).sort((a,b)=>a.position-b.position),insertAt=targetId?destination.findIndex(x=>x.id===targetId):destination.length;destination.splice(insertAt<0?destination.length:insertAt,0,moved);sidebar.categories.forEach(category=>{const ordered=category.id===cat.id?destination:sidebar.channels.filter(x=>x.category_id===category.id&&x.id!==id).sort((a,b)=>a.position-b.position);ordered.forEach((item,position)=>item.position=position)});await saveOrder();await select(community)};sidebar.channels.filter(x=>x.category_id===cat.id).sort((a,b)=>a.position-b.position).forEach(c=>{const b=document.createElement('button');b.draggable=canEdit();b.dataset.id=c.id;b.textContent=`${icons[c.type]} ${c.name}`;b.onclick=()=>open(c);b.ondragstart=e=>{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('channel',c.id)};b.ondragover=e=>{e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect='move';b.style.boxShadow='inset 0 2px 0 #ff8d82'};b.ondragleave=()=>b.style.boxShadow='';b.ondrop=async e=>{b.style.boxShadow='';await group.ondrop(e)};b.oncontextmenu=e=>canEdit()&&ctx(e,[{label:'Open Channel',action:()=>open(c)},{label:'Create Text Channel',action:()=>promptCreate(cat,'text')},{label:'Create Forum Channel',action:()=>promptCreate(cat,'forum')},{label:'Create Voice Channel',action:()=>promptCreate(cat,'voice')},{label:'Create Auditorium',action:()=>promptCreate(cat,'auditorium')}]);group.append(b)});section.append(group);channels.append(section)})}
-function promptCreate(cat,type){channelModal.style.display='grid';channelModal.dataset.category=cat.id;document.querySelector('#channelModalType').value=type;document.querySelector('#channelModalName').value='';document.querySelector('#channelModalTitle').textContent=`Create ${titles[type].toLowerCase()}`;document.querySelector('#channelModalName').focus()}document.querySelector('#channelModalCancel').onclick=()=>channelModal.style.display='none';channelModal.querySelector('form').onsubmit=async e=>{e.preventDefault();const name=document.querySelector('#channelModalName').value.trim(),type=document.querySelector('#channelModalType').value,categoryId=Number(channelModal.dataset.category);if(!name)return;try{await api(`/api/communities/${community.id}/channels`,{method:'POST',body:JSON.stringify({name,type,categoryId})});channelModal.style.display='none';await select(community)}catch(error){alert(error.message)}};function createCategory(){const name=prompt('Category name');if(name)api(`/api/communities/${community.id}/categories`,{method:'POST',body:JSON.stringify({name})}).then(()=>select(community)).catch(e=>alert(e.message))}
-async function select(c){community=c;sidebar=await api(`/api/communities/${c.id}/channels`);draw();if(sidebar.channels[0])open(sidebar.channels[0])}async function load(){const r=await api('/api/communities');list.innerHTML='';r.communities.forEach(c=>{const b=document.createElement('button');b.textContent=c.name;b.onclick=()=>select(c);list.append(b)});if(r.communities[0])select(r.communities[0])}
-form.onsubmit=async e=>{e.preventDefault();const body=document.querySelector('#messageInput').value.trim();if(!body)return;try{if(channel.type==='forum'){const title=prompt('Forum topic title');if(!title)return;await api(`/api/channels/${channel.id}/forum-posts`,{method:'POST',body:JSON.stringify({title,body})})}else await api(`/api/channels/${channel.id}/messages`,{method:'POST',body:JSON.stringify({body})});document.querySelector('#messageInput').value='';open(channel)}catch(e){alert(e.message)}};(async()=>{if(!token)return location.assign('auth.html');try{user=(await api('/api/me')).user;await load()}catch{sessionStorage.clear();location.assign('auth.html')}})();
+const token = sessionStorage.getItem('emberfansToken');
+const list = document.querySelector('#communityList');
+const channels = document.querySelector('#channelList');
+const messages = document.querySelector('#messageList');
+const form = document.querySelector('#messageForm');
+let user, community, channel, sidebar, suppressChannelClickUntil = 0;
+
+const icons = { text: '#', forum: '[]', voice: '()', auditorium: '()' };
+const titles = { text: 'TEXT CHANNEL', forum: 'FORUM CHANNEL', voice: 'VOICE CHANNEL', auditorium: 'AUDITORIUM' };
+
+const menu = document.createElement('div');
+menu.style.cssText = 'display:none;position:fixed;z-index:20;min-width:190px;padding:7px;background:#26272f;border:1px solid #3b3d49;border-radius:7px;box-shadow:0 12px 35px #0008';
+document.body.append(menu);
+document.addEventListener('click', () => menu.style.display = 'none');
+
+const channelModal = document.createElement('div');
+channelModal.style.cssText = 'display:none;position:fixed;inset:0;z-index:30;place-items:center;background:#08090dbb';
+channelModal.innerHTML = '<form style="width:min(380px,calc(100% - 30px));padding:24px;background:#20212a;border:1px solid #40424e;border-radius:10px;display:grid;gap:14px"><strong id="channelModalTitle" style="font-size:18px">Create Channel</strong><label style="display:grid;gap:6px;font-size:11px">Channel name<input id="channelModalName" maxlength="48" required style="padding:10px;border:1px solid #444651;border-radius:6px;background:#13141b;color:#fff"></label><label style="display:grid;gap:6px;font-size:11px">Channel type<select id="channelModalType" style="padding:10px;border:1px solid #444651;border-radius:6px;background:#13141b;color:#fff"><option value="text">Text channel</option><option value="forum">Forum channel</option><option value="voice">Voice channel</option><option value="auditorium">Auditorium</option></select></label><div style="display:flex;justify-content:end;gap:8px"><button type="button" id="channelModalCancel" class="secondary-button">Cancel</button><button class="primary-button">Create channel</button></div></form>';
+document.body.append(channelModal);
+
+async function api(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) } });
+  const body = response.status === 204 ? {} : await response.json();
+  if (!response.ok) throw Error(body.error || 'Request failed.');
+  return body;
+}
+
+function esc(value) {
+  const node = document.createElement('i');
+  node.textContent = value;
+  return node.innerHTML;
+}
+
+function canEdit() {
+  return user && (['owner', 'moderator'].includes(community?.member_role) || user.role === 'admin');
+}
+
+function contextMenu(event, items) {
+  event.preventDefault();
+  menu.innerHTML = '';
+  items.forEach(item => {
+    const button = document.createElement('button');
+    button.textContent = item.label;
+    button.style.cssText = `display:block;width:100%;border:0;background:transparent;color:${item.danger ? '#ff807d' : '#eee'};padding:9px 10px;text-align:left;border-radius:4px;font:600 12px Manrope;cursor:pointer`;
+    button.onclick = () => { menu.style.display = 'none'; item.action(); };
+    menu.append(button);
+  });
+  menu.style.left = `${event.clientX}px`;
+  menu.style.top = `${event.clientY}px`;
+  menu.style.display = 'block';
+}
+
+function openCreateModal(category, type = 'text') {
+  channelModal.style.display = 'grid';
+  channelModal.dataset.category = category.id;
+  document.querySelector('#channelModalType').value = type;
+  document.querySelector('#channelModalName').value = '';
+  document.querySelector('#channelModalTitle').textContent = `Create ${titles[type].toLowerCase()}`;
+  document.querySelector('#channelModalName').focus();
+}
+
+function categoryActions(category) {
+  return [
+    { label: 'Create Text Channel', action: () => openCreateModal(category, 'text') },
+    { label: 'Create Forum Channel', action: () => openCreateModal(category, 'forum') },
+    { label: 'Create Voice Channel', action: () => openCreateModal(category, 'voice') },
+    { label: 'Create Auditorium', action: () => openCreateModal(category, 'auditorium') },
+    { label: 'Create Category', action: createCategory }
+  ];
+}
+
+function render(items, forum) {
+  messages.innerHTML = items.length ? items.map(item => forum
+    ? `<article style="background:#1a1b25;border:1px solid #323442;border-radius:9px;padding:15px"><h3>${esc(item.title)}</h3><small>${esc(item.author.username)} - ${new Date(item.createdAt).toLocaleString()}</small><p>${esc(item.body)}</p></article>`
+    : `<article class="community-message"><span class="avatar">${esc(item.author.username.slice(0, 2))}</span><p><strong>${esc(item.author.username)}</strong><time>${new Date(item.createdAt).toLocaleString()}</time><br>${esc(item.body)}</p></article>`
+  ).join('') : '<p class="empty">Nothing here yet.</p>';
+}
+
+function voiceDock(roomChannel, room) {
+  let dock = document.querySelector('#voiceDock');
+  if (!dock) { dock = document.createElement('aside'); dock.id = 'voiceDock'; document.body.append(dock); }
+  dock.innerHTML = `<strong style="display:block;color:#65d58a;font:700 13px Manrope">Voice Connected</strong><small style="display:block;color:#b6b7c2;margin:3px 0 10px">${esc(roomChannel.name)} - ${room.participants.length} participant${room.participants.length === 1 ? '' : 's'}</small><button id="disconnectVoice" style="border:0;border-radius:6px;padding:8px 10px;background:#4a2930;color:#ffd0cb;font:700 10px Manrope;cursor:pointer">Disconnect</button>`;
+  document.querySelector('#disconnectVoice').onclick = async () => {
+    await api(`/api/channels/${roomChannel.id}/join`, { method: 'DELETE' });
+    dock.remove();
+    document.querySelectorAll(`[data-room-members="${roomChannel.id}"]`).forEach(node => node.remove());
+  };
+}
+
+async function open(selectedChannel) {
+  channel = selectedChannel;
+  document.querySelector('#channelTitle').textContent = `${icons[channel.type] || '#'} ${channel.name}`;
+  document.querySelector('#channelSubtitle').textContent = channel.description || community.name;
+  document.querySelector('#channelType').textContent = titles[channel.type];
+  if (['voice', 'auditorium'].includes(channel.type)) {
+    form.hidden = true;
+    await api(`/api/channels/${channel.id}/join`, { method: 'POST' });
+    const room = await api(`/api/channels/${channel.id}/participants`);
+    document.querySelectorAll('[data-room-members]').forEach(node => node.remove());
+    const voiceButton = channels.querySelector(`[data-id="${channel.id}"]`);
+    if (voiceButton) {
+      const members = document.createElement('div');
+      members.dataset.roomMembers = channel.id;
+      members.style.cssText = 'padding:2px 8px 7px 27px;color:#c3c4cd;font:11px Manrope;display:grid;gap:5px';
+      members.innerHTML = room.participants.map(person => `<span><i style="width:7px;height:7px;border-radius:50%;background:#5bd486;display:inline-block;margin-right:6px"></i>${esc(person.display_name)}</span>`).join('');
+      voiceButton.after(members);
+    }
+    voiceDock(channel, room);
+    messages.innerHTML = `<div class="empty"><strong>Joined ${titles[channel.type].toLowerCase()}</strong><br>You are now in this room.<br><br>Use the Voice Connected panel to disconnect.</div>`;
+    return;
+  }
+  form.hidden = false;
+  const result = await api(`/api/channels/${channel.id}/${channel.type === 'forum' ? 'forum-posts' : 'messages'}`);
+  render(channel.type === 'forum' ? result.posts : result.messages, channel.type === 'forum');
+}
+
+async function saveOrder() {
+  const orderedChannels = [];
+  sidebar.categories.forEach(categoryItem => {
+    sidebar.channels.filter(item => item.category_id === categoryItem.id).sort((a, b) => a.position - b.position)
+      .forEach((item, position) => orderedChannels.push({ id: item.id, categoryId: categoryItem.id, position }));
+  });
+  await api(`/api/communities/${community.id}/sidebar`, { method: 'PUT', body: JSON.stringify({ categories: sidebar.categories.map(item => ({ id: item.id })), channels: orderedChannels }) });
+}
+
+async function moveChannel(channelId, destinationCategoryId, beforeChannelId) {
+  const moved = sidebar.channels.find(item => item.id === channelId);
+  if (!moved) return;
+  moved.category_id = destinationCategoryId;
+  const destination = sidebar.channels.filter(item => item.category_id === destinationCategoryId && item.id !== channelId).sort((a, b) => a.position - b.position);
+  const insertionIndex = beforeChannelId ? destination.findIndex(item => item.id === beforeChannelId) : destination.length;
+  destination.splice(insertionIndex < 0 ? destination.length : insertionIndex, 0, moved);
+  sidebar.categories.forEach(categoryItem => {
+    const ordered = categoryItem.id === destinationCategoryId ? destination : sidebar.channels.filter(item => item.category_id === categoryItem.id && item.id !== channelId).sort((a, b) => a.position - b.position);
+    ordered.forEach((item, position) => item.position = position);
+  });
+  await saveOrder();
+  await select(community);
+}
+
+function attachChannelDrag(button, selectedChannel) {
+  if (!canEdit()) return;
+  let startX, startY, dragging = false, hoverTarget;
+  button.onpointerdown = event => {
+    if (event.button !== 0) return;
+    startX = event.clientX; startY = event.clientY;
+    const move = moveEvent => {
+      if (!dragging && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 7) return;
+      dragging = true;
+      button.style.opacity = '.45';
+      const target = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+      const nextTarget = target?.closest('#channelList button[data-id]');
+      if (hoverTarget && hoverTarget !== nextTarget) hoverTarget.style.boxShadow = '';
+      hoverTarget = nextTarget;
+      if (hoverTarget && hoverTarget !== button) hoverTarget.style.boxShadow = 'inset 0 2px 0 #ff8d82';
+    };
+    const end = async endEvent => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', end);
+      button.style.opacity = '';
+      if (hoverTarget) hoverTarget.style.boxShadow = '';
+      if (!dragging) return;
+      suppressChannelClickUntil = Date.now() + 350;
+      const target = document.elementFromPoint(endEvent.clientX, endEvent.clientY);
+      const targetButton = target?.closest('#channelList button[data-id]');
+      const targetSection = target?.closest('#channelList section[data-category]');
+      const categoryId = Number(targetSection?.dataset.category || targetButton?.closest('section[data-category]')?.dataset.category);
+      if (!categoryId) return;
+      await moveChannel(selectedChannel.id, categoryId, targetButton && Number(targetButton.dataset.id) !== selectedChannel.id ? Number(targetButton.dataset.id) : null);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', end, { once: true });
+  };
+}
+
+function draw() {
+  channels.innerHTML = '';
+  sidebar.categories.forEach(categoryItem => {
+    const section = document.createElement('section');
+    section.dataset.category = categoryItem.id;
+    const head = document.createElement('h2');
+    const name = document.createElement('span'); name.textContent = categoryItem.name;
+    head.append(name);
+    if (canEdit()) {
+      const plus = document.createElement('button');
+      plus.type = 'button'; plus.className = 'category-add'; plus.textContent = '+'; plus.title = `Create channel in ${categoryItem.name}`;
+      plus.onclick = event => { event.stopPropagation(); openCreateModal(categoryItem, 'text'); };
+      head.append(plus);
+    }
+    head.oncontextmenu = event => canEdit() && contextMenu(event, categoryActions(categoryItem));
+    section.append(head);
+    const group = document.createElement('div');
+    group.className = 'category-drop-zone';
+    sidebar.channels.filter(item => item.category_id === categoryItem.id).sort((a, b) => a.position - b.position).forEach(channelItem => {
+      const button = document.createElement('button');
+      button.dataset.id = channelItem.id;
+      button.textContent = `${icons[channelItem.type]} ${channelItem.name}`;
+      button.onclick = () => { if (Date.now() >= suppressChannelClickUntil) open(channelItem); };
+      attachChannelDrag(button, channelItem);
+      button.oncontextmenu = event => canEdit() && contextMenu(event, [{ label: 'Open Channel', action: () => open(channelItem) }, ...categoryActions(categoryItem)]);
+      group.append(button);
+    });
+    section.append(group);
+    channels.append(section);
+  });
+}
+
+document.querySelector('.community-side').addEventListener('contextmenu', event => {
+  if (event.target.closest('#channelList button,#channelList h2')) return;
+  if (canEdit() && sidebar?.categories?.length) contextMenu(event, categoryActions(sidebar.categories[0]));
+});
+
+document.querySelector('#channelModalCancel').onclick = () => channelModal.style.display = 'none';
+channelModal.querySelector('form').onsubmit = async event => {
+  event.preventDefault();
+  const name = document.querySelector('#channelModalName').value.trim();
+  const type = document.querySelector('#channelModalType').value;
+  const categoryId = Number(channelModal.dataset.category);
+  if (!name) return;
+  try {
+    await api(`/api/communities/${community.id}/channels`, { method: 'POST', body: JSON.stringify({ name, type, categoryId }) });
+    channelModal.style.display = 'none';
+    await select(community);
+  } catch (error) { alert(error.message); }
+};
+
+function createCategory() {
+  const name = prompt('Category name');
+  if (name) api(`/api/communities/${community.id}/categories`, { method: 'POST', body: JSON.stringify({ name }) }).then(() => select(community)).catch(error => alert(error.message));
+}
+
+async function select(selectedCommunity) {
+  community = selectedCommunity;
+  sidebar = await api(`/api/communities/${community.id}/channels`);
+  draw();
+  if (sidebar.channels[0]) open(sidebar.channels[0]);
+}
+
+async function load() {
+  const result = await api('/api/communities');
+  list.innerHTML = '';
+  result.communities.forEach(item => { const button = document.createElement('button'); button.textContent = item.name; button.onclick = () => select(item); list.append(button); });
+  if (result.communities[0]) select(result.communities[0]);
+}
+
+form.onsubmit = async event => {
+  event.preventDefault();
+  const body = document.querySelector('#messageInput').value.trim();
+  if (!body) return;
+  try {
+    if (channel.type === 'forum') {
+      const title = prompt('Forum topic title');
+      if (!title) return;
+      await api(`/api/channels/${channel.id}/forum-posts`, { method: 'POST', body: JSON.stringify({ title, body }) });
+    } else await api(`/api/channels/${channel.id}/messages`, { method: 'POST', body: JSON.stringify({ body }) });
+    document.querySelector('#messageInput').value = '';
+    open(channel);
+  } catch (error) { alert(error.message); }
+};
+
+(async () => {
+  if (!token) return location.assign('auth.html');
+  try { user = (await api('/api/me')).user; await load(); } catch { sessionStorage.clear(); location.assign('auth.html'); }
+})();
