@@ -36,6 +36,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS content_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     performer_id INTEGER NOT NULL REFERENCES users(id),
+    channel_id INTEGER REFERENCES channels(id),
     title TEXT NOT NULL,
     summary TEXT NOT NULL DEFAULT '',
     kind TEXT NOT NULL CHECK(kind IN ('sfw_photo', 'nsfw_photo', 'video', 'live_event')),
@@ -139,6 +140,13 @@ db.exec(`
     body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 4000),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS forum_replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id INTEGER NOT NULL REFERENCES forum_posts(id),
+    author_id INTEGER NOT NULL REFERENCES users(id),
+    body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 4000),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
   CREATE TABLE IF NOT EXISTS live_channel_participants (
     channel_id INTEGER NOT NULL REFERENCES channels(id),
     user_id INTEGER NOT NULL REFERENCES users(id),
@@ -151,6 +159,7 @@ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_display_name_unique ON users(di
 const contentColumns = db.prepare('PRAGMA table_info(content_items)').all().map(column => column.name);
 if (!contentColumns.includes('media_path')) db.exec('ALTER TABLE content_items ADD COLUMN media_path TEXT');
 if (!contentColumns.includes('media_mime_type')) db.exec('ALTER TABLE content_items ADD COLUMN media_mime_type TEXT');
+if (!contentColumns.includes('channel_id')) db.exec('ALTER TABLE content_items ADD COLUMN channel_id INTEGER REFERENCES channels(id)');
 const channelColumns = db.prepare('PRAGMA table_info(channels)').all().map(column => column.name);
 if (!channelColumns.includes('type')) db.exec("ALTER TABLE channels ADD COLUMN type TEXT NOT NULL DEFAULT 'text' CHECK(type IN ('text', 'forum', 'voice', 'auditorium'))");
 if (!channelColumns.includes('description')) db.exec("ALTER TABLE channels ADD COLUMN description TEXT NOT NULL DEFAULT ''");
@@ -173,8 +182,8 @@ const upload = multer({
   }),
   limits: { fileSize: 100 * 1024 * 1024, files: 1 },
   fileFilter: (_request, file, callback) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/webm'];
-    callback(allowed.includes(file.mimetype) ? null : new Error('Only JPEG, PNG, WebP, MP4, and WebM files are accepted.'), allowed.includes(file.mimetype));
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/webm'];
+    callback(allowed.includes(file.mimetype) ? null : new Error('Only JPEG, PNG, WebP, GIF, MP4, and WebM files are accepted.'), allowed.includes(file.mimetype));
   }
 });
 
@@ -382,13 +391,22 @@ app.delete('/api/channels/:id', authenticate, (request, response) => {
   const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
   if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
   if (!communityModerator(channel.community_id, request.user)) return response.status(403).json({ error: 'Only community moderators can delete channels.' });
+  const mediaFiles = [];
   db.transaction(() => {
+    const mediaItems = db.prepare('SELECT id, media_path FROM content_items WHERE channel_id = ?').all(channel.id);
+    mediaItems.forEach(item => {
+      db.prepare('DELETE FROM entitlements WHERE content_id = ?').run(item.id);
+      db.prepare('DELETE FROM content_items WHERE id = ?').run(item.id);
+      if (item.media_path) mediaFiles.push(item.media_path);
+    });
     db.prepare('DELETE FROM live_channel_participants WHERE channel_id = ?').run(channel.id);
     db.prepare('DELETE FROM channel_messages WHERE channel_id = ?').run(channel.id);
+    db.prepare('DELETE FROM forum_replies WHERE post_id IN (SELECT id FROM forum_posts WHERE channel_id = ?)').run(channel.id);
     db.prepare('DELETE FROM forum_posts WHERE channel_id = ?').run(channel.id);
     db.prepare('DELETE FROM channels WHERE id = ?').run(channel.id);
     communityAudit(channel.community_id, request.user.id, 'channel_deleted', { channelId: channel.id, name: channel.name, type: channel.type });
   })();
+  mediaFiles.forEach(file => fs.rmSync(path.join(mediaDirectory, file), { force: true }));
   response.sendStatus(204);
 });
 
@@ -404,7 +422,7 @@ app.post('/api/channels/:id/messages', authenticate, (request, response) => {
   const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(request.params.id);
   const body = String(request.body?.body || '').trim();
   if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
-  if (channel.type !== 'text') return response.status(400).json({ error: 'Use the dedicated post or live-room experience for this channel type.' });
+  if (channel.type !== 'text' || channel.display_mode === 'gallery') return response.status(400).json({ error: 'This channel does not accept text messages.' });
   if (!communityMembership(channel.community_id, request.user.id)) return response.status(403).json({ error: 'Join this community before posting.' });
   if (!body || body.length > 2000) return response.status(400).json({ error: 'Messages must be 1 to 2,000 characters.' });
   const result = db.prepare('INSERT INTO channel_messages (channel_id, author_id, body) VALUES (?, ?, ?)').run(channel.id, request.user.id, body);
@@ -417,7 +435,7 @@ app.get('/api/channels/:id/forum-posts', authenticate, (request, response) => {
   if (!channel) return response.status(404).json({ error: 'Channel was not found.' });
   if (channel.type !== 'forum') return response.status(400).json({ error: 'This channel is not a forum.' });
   if (!communityMembership(channel.community_id, request.user.id)) return response.status(403).json({ error: 'Join this community before viewing posts.' });
-  const posts = db.prepare(`SELECT forum_posts.*, users.display_name, users.role FROM forum_posts JOIN users ON users.id = forum_posts.author_id WHERE channel_id = ? ORDER BY forum_posts.id DESC LIMIT 100`).all(channel.id).map(post => ({ id: post.id, title: post.title, body: post.body, createdAt: post.created_at, author: { id: post.author_id, username: post.display_name, role: post.role } }));
+  const posts = db.prepare(`SELECT forum_posts.*, users.display_name, users.role, (SELECT count(*) FROM forum_replies WHERE post_id = forum_posts.id) AS reply_count FROM forum_posts JOIN users ON users.id = forum_posts.author_id WHERE channel_id = ? ORDER BY forum_posts.id DESC LIMIT 100`).all(channel.id).map(post => ({ id: post.id, title: post.title, body: post.body, replyCount: post.reply_count, createdAt: post.created_at, author: { id: post.author_id, username: post.display_name, role: post.role } }));
   response.json({ posts });
 });
 
@@ -431,6 +449,43 @@ app.post('/api/channels/:id/forum-posts', authenticate, (request, response) => {
   if (title.length < 2 || title.length > 140 || body.length < 1 || body.length > 4000) return response.status(400).json({ error: 'Forum posts need a 2 to 140 character title and a message up to 4,000 characters.' });
   const result = db.prepare('INSERT INTO forum_posts (channel_id, author_id, title, body) VALUES (?, ?, ?, ?)').run(channel.id, request.user.id, title, body);
   response.status(201).json({ post: db.prepare('SELECT * FROM forum_posts WHERE id = ?').get(result.lastInsertRowid) });
+});
+
+app.get('/api/forum-posts/:id/replies', authenticate, (request, response) => {
+  const post = db.prepare('SELECT forum_posts.*, channels.community_id FROM forum_posts JOIN channels ON channels.id = forum_posts.channel_id WHERE forum_posts.id = ?').get(request.params.id);
+  if (!post || !communityMembership(post.community_id, request.user.id)) return response.status(404).json({ error: 'Forum thread was not found.' });
+  const replies = db.prepare(`SELECT forum_replies.*, users.display_name, users.role FROM forum_replies JOIN users ON users.id = forum_replies.author_id WHERE post_id = ? ORDER BY forum_replies.id`).all(post.id).map(reply => ({ id: reply.id, body: reply.body, createdAt: reply.created_at, author: { id: reply.author_id, username: reply.display_name, role: reply.role } }));
+  response.json({ post: { id: post.id, title: post.title, body: post.body, createdAt: post.created_at, authorId: post.author_id }, replies });
+});
+
+app.post('/api/forum-posts/:id/replies', authenticate, (request, response) => {
+  const post = db.prepare('SELECT forum_posts.*, channels.community_id FROM forum_posts JOIN channels ON channels.id = forum_posts.channel_id WHERE forum_posts.id = ?').get(request.params.id);
+  const body = String(request.body?.body || '').trim();
+  if (!post || !communityMembership(post.community_id, request.user.id)) return response.status(404).json({ error: 'Forum thread was not found.' });
+  if (!body || body.length > 4000) return response.status(400).json({ error: 'Replies must be 1 to 4,000 characters.' });
+  const result = db.prepare('INSERT INTO forum_replies (post_id, author_id, body) VALUES (?, ?, ?)').run(post.id, request.user.id, body);
+  response.status(201).json({ reply: { id: result.lastInsertRowid } });
+});
+
+app.delete('/api/forum-replies/:id', authenticate, (request, response) => {
+  const reply = db.prepare('SELECT forum_replies.*, forum_posts.channel_id, channels.community_id FROM forum_replies JOIN forum_posts ON forum_posts.id = forum_replies.post_id JOIN channels ON channels.id = forum_posts.channel_id WHERE forum_replies.id = ?').get(request.params.id);
+  if (!reply) return response.status(404).json({ error: 'Forum reply was not found.' });
+  const isModeratorAction = communityModerator(reply.community_id, request.user);
+  if (reply.author_id !== request.user.id && !isModeratorAction) return response.status(403).json({ error: 'Only the author or a moderator can delete this reply.' });
+  db.prepare('DELETE FROM forum_replies WHERE id = ?').run(reply.id);
+  if (isModeratorAction) communityAudit(reply.community_id, request.user.id, 'forum_reply_removed', { replyId: reply.id, channelId: reply.channel_id, authorId: reply.author_id });
+  response.sendStatus(204);
+});
+
+app.delete('/api/forum-posts/:id', authenticate, (request, response) => {
+  const post = db.prepare('SELECT forum_posts.*, channels.community_id FROM forum_posts JOIN channels ON channels.id = forum_posts.channel_id WHERE forum_posts.id = ?').get(request.params.id);
+  if (!post) return response.status(404).json({ error: 'Forum post was not found.' });
+  const isModeratorAction = communityModerator(post.community_id, request.user);
+  if (post.author_id !== request.user.id && !isModeratorAction) return response.status(403).json({ error: 'Only the author or a moderator can delete this forum post.' });
+  db.prepare('DELETE FROM forum_replies WHERE post_id = ?').run(post.id);
+  db.prepare('DELETE FROM forum_posts WHERE id = ?').run(post.id);
+  if (isModeratorAction) communityAudit(post.community_id, request.user.id, 'forum_post_removed', { postId: post.id, channelId: post.channel_id, authorId: post.author_id });
+  response.sendStatus(204);
 });
 
 app.get('/api/channels/:id/participants', authenticate, (request, response) => {
@@ -501,18 +556,28 @@ app.post('/api/direct-conversations/:id/messages', authenticate, (request, respo
 });
 
 app.get('/api/content', authenticate, (request, response) => {
-  const items = db.prepare(`SELECT content_items.*, users.display_name AS performer_name FROM content_items JOIN users ON users.id = content_items.performer_id WHERE published_at IS NOT NULL ORDER BY published_at DESC`).all()
+  const channelId = request.query.channelId ? Number(request.query.channelId) : null;
+  if (channelId) {
+    const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId);
+    if (!channel || channel.display_mode !== 'gallery' || !communityMembership(channel.community_id, request.user.id)) return response.status(404).json({ error: 'Media channel was not found.' });
+  }
+  const items = db.prepare(`SELECT content_items.*, users.display_name AS performer_name FROM content_items JOIN users ON users.id = content_items.performer_id WHERE published_at IS NOT NULL AND (? IS NULL OR content_items.channel_id = ?) ORDER BY published_at DESC`).all(channelId, channelId)
     .map(item => ({ ...item, hasAccess: hasContentAccess(request.user.id, item), mediaUrl: item.media_path && hasContentAccess(request.user.id, item) ? `/api/media/${item.id}` : null }));
   response.json({ items });
 });
 
 app.post('/api/content', authenticate, requireRole('performer', 'admin'), (request, response) => {
-  const { title, summary = '', kind, accessType } = request.body || {};
+  const { title, summary = '', kind, accessType, channelId } = request.body || {};
   const validKinds = ['sfw_photo', 'nsfw_photo', 'video', 'live_event'];
   const validAccessTypes = ['free', 'subscriber', 'purchase'];
   if (typeof title !== 'string' || title.trim().length < 2 || title.trim().length > 120) return response.status(400).json({ error: 'Title must be 2 to 120 characters.' });
   if (!validKinds.includes(kind) || !validAccessTypes.includes(accessType)) return response.status(400).json({ error: 'Choose a valid content type and access type.' });
-  const result = db.prepare('INSERT INTO content_items (performer_id, title, summary, kind, access_type, published_at) VALUES (?, ?, ?, ?, ?, ?)').run(request.user.id, title.trim(), String(summary).trim(), kind, accessType, new Date().toISOString());
+  const mediaChannelId = channelId ? Number(channelId) : null;
+  if (mediaChannelId) {
+    const mediaChannel = db.prepare('SELECT * FROM channels WHERE id = ?').get(mediaChannelId);
+    if (!mediaChannel || mediaChannel.display_mode !== 'gallery' || !communityModerator(mediaChannel.community_id, request.user)) return response.status(403).json({ error: 'Only community moderators can upload to this media channel.' });
+  }
+  const result = db.prepare('INSERT INTO content_items (performer_id, channel_id, title, summary, kind, access_type, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(request.user.id, mediaChannelId, title.trim(), String(summary).trim(), kind, accessType, new Date().toISOString());
   response.status(201).json({ item: db.prepare('SELECT * FROM content_items WHERE id = ?').get(result.lastInsertRowid) });
 });
 
@@ -523,7 +588,27 @@ app.post('/api/content/:id/media', authenticate, requireRole('performer', 'admin
   if (!request.file) return response.status(400).json({ error: 'Select a supported image or video file.' });
   if (item.media_path) fs.rmSync(path.join(mediaDirectory, item.media_path), { force: true });
   db.prepare('UPDATE content_items SET media_path = ?, media_mime_type = ? WHERE id = ?').run(request.file.filename, request.file.mimetype, item.id);
+  if (item.channel_id) {
+    const mediaChannel = db.prepare('SELECT community_id FROM channels WHERE id = ?').get(item.channel_id);
+    if (mediaChannel) communityAudit(mediaChannel.community_id, request.user.id, 'media_uploaded', { contentId: item.id, title: item.title, channelId: item.channel_id, mimeType: request.file.mimetype });
+  }
   response.status(201).json({ itemId: item.id, uploaded: true });
+});
+
+app.delete('/api/content/:id', authenticate, requireRole('performer', 'admin'), (request, response) => {
+  const item = db.prepare('SELECT * FROM content_items WHERE id = ?').get(request.params.id);
+  if (!item) return response.status(404).json({ error: 'Media item was not found.' });
+  if (request.user.role !== 'admin' && item.performer_id !== request.user.id) return response.status(403).json({ error: 'Only the performer who created this media can delete it.' });
+  db.transaction(() => {
+    db.prepare('DELETE FROM entitlements WHERE content_id = ?').run(item.id);
+    db.prepare('DELETE FROM content_items WHERE id = ?').run(item.id);
+    if (item.channel_id) {
+      const mediaChannel = db.prepare('SELECT community_id FROM channels WHERE id = ?').get(item.channel_id);
+      if (mediaChannel) communityAudit(mediaChannel.community_id, request.user.id, 'media_deleted', { contentId: item.id, title: item.title, channelId: item.channel_id });
+    }
+  })();
+  if (item.media_path) fs.rmSync(path.join(mediaDirectory, item.media_path), { force: true });
+  response.sendStatus(204);
 });
 
 app.get('/api/media/:contentId', authenticate, (request, response, next) => {

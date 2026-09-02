@@ -24,6 +24,22 @@ settingsModal.className = 'settings-modal';
 settingsModal.innerHTML = '<section class="settings-card"><nav class="settings-nav"><strong>Administration</strong><button class="active" data-settings-view="overview">Overview</button><button data-settings-view="audit">Audit Log</button><button data-settings-view="roles">Roles & Permissions</button><button data-settings-view="moderation">Moderation</button><button data-settings-view="integrations">Integrations</button></nav><main class="settings-main"><button class="settings-close" aria-label="Close administration settings">×</button><div id="settingsContent"></div></main></section>';
 document.body.append(settingsModal);
 
+const mediaUploadModal = document.createElement('div');
+mediaUploadModal.className = 'settings-modal';
+mediaUploadModal.innerHTML = '<form class="media-upload-card"><button type="button" class="settings-close" aria-label="Close upload">×</button><h2>Upload to Media</h2><p>Photos, videos, and GIFs appear in this gallery. Choose the audience before publishing.</p><label>Title<input id="mediaUploadTitle" maxlength="120" required></label><label>Media type<select id="mediaUploadKind"><option value="sfw_photo">Photo or GIF</option><option value="nsfw_photo">18+ Photo or GIF</option><option value="video">Video</option></select></label><label>Audience<select id="mediaUploadAccess"><option value="free">Free</option><option value="subscriber">Subscribers</option><option value="purchase">One-time purchase</option></select></label><label>File<input id="mediaUploadFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm" required></label><button class="primary-button">Upload media</button><small id="mediaUploadStatus"></small></form>';
+document.body.append(mediaUploadModal);
+
+const threadModal = document.createElement('div');
+threadModal.className = 'settings-modal';
+threadModal.innerHTML = '<section class="thread-card"><button class="settings-close" aria-label="Close thread">×</button><div id="threadContent"></div></section>';
+document.body.append(threadModal);
+
+const mediaViewerModal = document.createElement('div');
+mediaViewerModal.className = 'settings-modal';
+mediaViewerModal.innerHTML = '<section class="media-viewer-card"><button class="settings-close" aria-label="Close media viewer">×</button><div id="mediaViewerContent"></div></section>';
+document.body.append(mediaViewerModal);
+let mediaViewerUrl = null;
+
 async function api(url, options = {}) {
   const response = await fetch(url, { ...options, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) } });
   const isJson = response.headers.get('content-type')?.includes('application/json');
@@ -49,6 +65,29 @@ function channelKind(channelItem) {
   return channelItem.display_mode === 'gallery' ? 'media' : channelItem.type;
 }
 
+function canManageMedia(item) {
+  return user?.role === 'admin' || item.performer_id === user?.id;
+}
+
+async function deleteForumPost(post) {
+  const enteredTitle = prompt(`Type ${post.title} to permanently delete this discussion.`);
+  if (enteredTitle === null) return;
+  if (enteredTitle.trim() !== post.title) return alert('The discussion title did not match. Nothing was deleted.');
+  try { await api(`/api/forum-posts/${post.id}`, { method: 'DELETE' }); await open(channel); } catch (error) { alert(error.message); }
+}
+
+async function deleteMediaItem(item) {
+  const enteredTitle = prompt(`Type ${item.title} to permanently delete this media item.`);
+  if (enteredTitle === null) return;
+  if (enteredTitle.trim() !== item.title) return alert('The media title did not match. Nothing was deleted.');
+  try { await api(`/api/content/${item.id}`, { method: 'DELETE' }); await renderGallery(); } catch (error) { alert(error.message); }
+}
+
+async function deleteMessage(message) {
+  if (!confirm('Delete this message?')) return;
+  try { await api(`/api/channel-messages/${message.id}`, { method: 'DELETE' }); await open(channel); } catch (error) { alert(error.message); }
+}
+
 function auditDescription(entry) {
   const details = entry.details || {};
   if (entry.action === 'channel_created') return `Created #${details.name || 'channel'} (${details.type || 'channel'}).`;
@@ -58,6 +97,10 @@ function auditDescription(entry) {
   if (entry.action === 'community_created') return `Created the ${details.name || 'community'} community.`;
   if (entry.action === 'sidebar_reordered') return `Reordered the sidebar (${details.channelCount || 0} channels).`;
   if (entry.action === 'message_removed') return `Removed a message in channel ${details.channelId || 'unknown'}.`;
+  if (entry.action === 'forum_post_removed') return `Removed a forum thread in channel ${details.channelId || 'unknown'}.`;
+  if (entry.action === 'forum_reply_removed') return `Removed a forum reply in channel ${details.channelId || 'unknown'}.`;
+  if (entry.action === 'media_uploaded') return `Uploaded media item ${details.title || 'unknown'}.`;
+  if (entry.action === 'media_deleted') return `Deleted media item ${details.title || 'unknown'}.`;
   return entry.action.replaceAll('_', ' ');
 }
 
@@ -80,6 +123,77 @@ async function showAdministration(view = 'overview') {
 
 settingsModal.querySelector('.settings-close').onclick = () => settingsModal.style.display = 'none';
 settingsModal.querySelectorAll('[data-settings-view]').forEach(button => button.onclick = () => showAdministration(button.dataset.settingsView));
+mediaUploadModal.querySelector('.settings-close').onclick = () => mediaUploadModal.style.display = 'none';
+mediaUploadModal.querySelector('form').onsubmit = async event => {
+  event.preventDefault();
+  const title = document.querySelector('#mediaUploadTitle').value.trim();
+  const kind = document.querySelector('#mediaUploadKind').value;
+  const accessType = document.querySelector('#mediaUploadAccess').value;
+  const file = document.querySelector('#mediaUploadFile').files[0];
+  const status = document.querySelector('#mediaUploadStatus');
+  if (!channel || channelKind(channel) !== 'media' || !file) return;
+  status.textContent = 'Uploading…';
+  try {
+    const created = await api('/api/content', { method: 'POST', body: JSON.stringify({ title, kind, accessType, channelId: channel.id }) });
+    const payload = new FormData();
+    payload.append('media', file);
+    const response = await fetch(`/api/content/${created.item.id}/media`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: payload });
+    if (!response.ok) {
+      const error = response.headers.get('content-type')?.includes('application/json') ? await response.json() : {};
+      await api(`/api/content/${created.item.id}`, { method: 'DELETE' });
+      throw Error(error.error || 'Upload failed.');
+    }
+    mediaUploadModal.style.display = 'none';
+    event.target.reset();
+    await renderGallery();
+  } catch (error) { status.textContent = error.message; }
+};
+threadModal.querySelector('.settings-close').onclick = () => threadModal.style.display = 'none';
+function closeMediaViewer() {
+  mediaViewerModal.style.display = 'none';
+  if (mediaViewerUrl) URL.revokeObjectURL(mediaViewerUrl);
+  mediaViewerUrl = null;
+  mediaViewerModal.querySelector('#mediaViewerContent').innerHTML = '';
+}
+mediaViewerModal.querySelector('.settings-close').onclick = closeMediaViewer;
+
+async function openMediaViewer(item) {
+  mediaViewerModal.style.display = 'grid';
+  const content = mediaViewerModal.querySelector('#mediaViewerContent');
+  content.innerHTML = '<p>Loading media…</p>';
+  if (!item.mediaUrl) {
+    content.innerHTML = `<h2>${esc(item.title)}</h2><p>This media requires an active ${esc(item.access_type)} entitlement before it can be viewed.</p>`;
+    return;
+  }
+  try {
+    const response = await fetch(item.mediaUrl, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) throw Error('This media is not available to your account.');
+    mediaViewerUrl = URL.createObjectURL(await response.blob());
+    const viewer = item.kind === 'video' ? `<video src="${mediaViewerUrl}" controls autoplay playsinline></video>` : `<img src="${mediaViewerUrl}" alt="${esc(item.title)}">`;
+    content.innerHTML = `<div class="media-viewer-stage">${viewer}</div><h2>${esc(item.title)}</h2><p>${esc(item.performer_name)} · ${esc(item.access_type)}</p>`;
+  } catch (error) { content.innerHTML = `<p>${esc(error.message)}</p>`; }
+}
+
+async function openForumThread(post) {
+  threadModal.style.display = 'grid';
+  const content = threadModal.querySelector('#threadContent');
+  content.innerHTML = '<p>Loading thread…</p>';
+  try {
+    const result = await api(`/api/forum-posts/${post.id}/replies`);
+    const replies = result.replies.map(reply => `<article class="thread-reply"><strong>${esc(reply.author.username)}</strong><time>${new Date(reply.createdAt).toLocaleString()}</time><p>${esc(reply.body)}</p>${(reply.author.id === user.id || canEdit()) ? `<button class="inline-delete" data-reply-id="${reply.id}">Delete</button>` : ''}</article>`).join('');
+    content.innerHTML = `<span class="thread-kicker">FORUM THREAD</span><h2>${esc(result.post.title)}</h2><article class="thread-starter"><p>${esc(result.post.body)}</p></article><section class="thread-replies">${replies || '<p class="thread-none">No replies yet. Start the discussion.</p>'}</section><form id="threadReplyForm" class="thread-reply-form"><input id="threadReplyInput" maxlength="4000" placeholder="Reply to this thread" required><button>Reply</button></form>`;
+    result.replies.forEach(reply => content.querySelector(`[data-reply-id="${reply.id}"]`)?.addEventListener('click', async () => {
+      if (!confirm('Delete this reply?')) return;
+      try { await api(`/api/forum-replies/${reply.id}`, { method: 'DELETE' }); await openForumThread(post); } catch (error) { alert(error.message); }
+    }));
+    content.querySelector('#threadReplyForm').onsubmit = async event => {
+      event.preventDefault();
+      const body = content.querySelector('#threadReplyInput').value.trim();
+      if (!body) return;
+      try { await api(`/api/forum-posts/${post.id}/replies`, { method: 'POST', body: JSON.stringify({ body }) }); await openForumThread(post); } catch (error) { alert(error.message); }
+    };
+  } catch (error) { content.innerHTML = `<p>${esc(error.message)}</p>`; }
+}
 
 function contextMenu(event, items) {
   event.preventDefault();
@@ -152,25 +266,35 @@ async function deleteChannel(channelItem) {
 function render(items) {
   messages.classList.remove('forum-view');
   messages.classList.remove('gallery-view');
-  messages.innerHTML = items.length ? items.map(item => `<article class="community-message"><span class="avatar">${esc(item.author.username.slice(0, 2))}</span><p><strong>${esc(item.author.username)}</strong><time>${new Date(item.createdAt).toLocaleString()}</time><br>${esc(item.body)}</p></article>`).join('') : '<p class="empty">Nothing here yet.</p>';
+  messages.innerHTML = items.length ? items.map(item => `<article class="community-message"><span class="avatar">${esc(item.author.username.slice(0, 2))}</span><p><strong>${esc(item.author.username)}</strong><time>${new Date(item.createdAt).toLocaleString()}</time><br>${esc(item.body)}</p>${(item.author.id === user.id || canEdit()) ? `<button class="inline-delete" data-message-id="${item.id}">Delete</button>` : ''}</article>`).join('') : '<p class="empty">Nothing here yet.</p>';
+  items.forEach(item => messages.querySelector(`[data-message-id="${item.id}"]`)?.addEventListener('click', () => deleteMessage(item)));
 }
 
 function renderForum(posts) {
   messages.classList.remove('gallery-view');
   messages.classList.add('forum-view');
-  const discussions = posts.length ? posts.map(post => `<article class="forum-post"><div class="forum-post-icon">▤</div><div><h3>${esc(post.title)}</h3><p>${esc(post.body)}</p><small>Started by <b>${esc(post.author.username)}</b> · ${new Date(post.createdAt).toLocaleString()}</small></div><span class="forum-replies">Discussion</span></article>`).join('') : '<div class="forum-empty"><div>▤</div><h2>No discussions yet</h2><p>Start the first conversation in this forum.</p></div>';
+  const discussions = posts.length ? posts.map(post => `<article class="forum-post" data-thread-id="${post.id}"><div class="forum-post-icon">▤</div><div><h3>${esc(post.title)}</h3><p>${esc(post.body)}</p><small>Started by <b>${esc(post.author.username)}</b> · ${new Date(post.createdAt).toLocaleString()}</small></div><span class="forum-replies">${post.replyCount || 0} replies</span>${(post.author.id === user.id || canEdit()) ? `<button class="inline-delete" data-forum-post-id="${post.id}">Delete</button>` : ''}</article>`).join('') : '<div class="forum-empty"><div>▤</div><h2>No discussions yet</h2><p>Start the first conversation in this forum.</p></div>';
   messages.innerHTML = `<section class="forum-hero"><span>FORUM</span><h2>${esc(channel.name)}</h2><p>Browse discussions or start a new topic for this community.</p></section><section class="forum-topic-list"><div class="forum-list-heading"><strong>Discussions</strong><span>${posts.length} topic${posts.length === 1 ? '' : 's'}</span></div>${discussions}</section>`;
+  posts.forEach(post => {
+    messages.querySelector(`[data-thread-id="${post.id}"]`)?.addEventListener('click', event => { if (!event.target.closest('.inline-delete')) openForumThread(post); });
+    messages.querySelector(`[data-forum-post-id="${post.id}"]`)?.addEventListener('click', () => deleteForumPost(post));
+  });
 }
 
 async function renderGallery() {
   messages.classList.remove('forum-view');
   messages.classList.add('gallery-view');
-  messages.innerHTML = '<section class="gallery-hero"><span>MEDIA GALLERY</span><h2>Creator media</h2><p>Photos and videos shared by creators. This channel has no chat.</p></section><section class="gallery-grid"><p class="empty">Loading media…</p></section>';
+  messages.innerHTML = `<section class="gallery-hero"><span>MEDIA GALLERY</span><h2>Creator media</h2><p>Photos, videos, and GIFs shared by creators. This channel has no chat.</p>${(['performer', 'admin'].includes(user?.role) && canEdit()) ? '<button id="uploadMediaButton" class="gallery-upload">Upload media</button>' : ''}</section><section class="gallery-grid"><p class="empty">Loading media…</p></section>`;
+  messages.querySelector('#uploadMediaButton')?.addEventListener('click', () => { mediaUploadModal.style.display = 'grid'; document.querySelector('#mediaUploadTitle').focus(); });
   try {
-    const result = await api('/api/content');
+    const result = await api(`/api/content?channelId=${channel.id}`);
     const items = result.items.filter(item => ['sfw_photo', 'nsfw_photo', 'video'].includes(item.kind));
     const grid = messages.querySelector('.gallery-grid');
-    grid.innerHTML = items.length ? items.map(item => `<article class="gallery-card" data-media-id="${item.id}"><div class="gallery-visual ${item.kind}"><span>${item.kind === 'video' ? '▶' : '▦'}</span></div><div><strong>${esc(item.title)}</strong><small>${esc(item.performer_name)} · ${item.access_type}</small></div></article>`).join('') : '<div class="gallery-empty"><div>▦</div><h2>No media yet</h2><p>Creator uploads will appear here.</p></div>';
+    grid.innerHTML = items.length ? items.map(item => `<article class="gallery-card" data-media-id="${item.id}"><div class="gallery-visual ${item.kind}"><span>${item.kind === 'video' ? '▶' : '▦'}</span></div><div><strong>${esc(item.title)}</strong><small>${esc(item.performer_name)} · ${item.access_type}</small>${canManageMedia(item) ? `<button class="gallery-delete" data-media-delete-id="${item.id}">Delete</button>` : ''}</div></article>`).join('') : '<div class="gallery-empty"><div>▦</div><h2>No media yet</h2><p>Creator uploads will appear here.</p></div>';
+    items.forEach(item => {
+      grid.querySelector(`[data-media-id="${item.id}"]`)?.addEventListener('click', event => { if (!event.target.closest('.gallery-delete')) openMediaViewer(item); });
+      grid.querySelector(`[data-media-delete-id="${item.id}"]`)?.addEventListener('click', () => deleteMediaItem(item));
+    });
     items.filter(item => item.mediaUrl).forEach(async item => {
       try {
         const response = await fetch(item.mediaUrl, { headers: { Authorization: `Bearer ${token}` } });

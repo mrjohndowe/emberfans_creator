@@ -45,8 +45,8 @@ Uploads are stored outside the public static directory. The browser can request 
 1. Sign in and open `http://127.0.0.1:3000/community.html`, or use the `#` Communities button in the dashboard rail.
 2. A performer or administrator can create a community; each new community starts with `# welcome` and `# general`.
 3. Members join a community before viewing or posting in its channels.
-4. Community owners, moderators, and administrators can add `text`, `forum`, `media`, `voice`, and `auditorium` channels through the in-app Create Channel modal. A media channel is a no-chat gallery of published creator photos and videos.
-5. Text channels store messages. Forum channels store titled discussion posts. Clicking a voice or auditorium channel joins that room, shows participants beneath it in the sidebar, and provides a Voice Connected panel with a local microphone voice test that records for five seconds and plays back after a short delay. This is a browser audio test, not a production real-time audio provider.
+4. Community owners, moderators, and administrators can add `text`, `forum`, `media`, `voice`, and `auditorium` channels through the in-app Create Channel modal. A media channel is a no-chat gallery. Performers and administrators can upload JPEG, PNG, WebP, GIF, MP4, and WebM items directly from that gallery. Clicking a gallery item opens a larger protected image/video viewer.
+5. Text channels store messages. Forum channels store compact titled discussion threads; selecting one opens its replies, and thread replies can be added or removed. Channel messages, forum threads, and forum replies can be removed by their author or a moderator; media can be removed by its creator or an administrator. Clicking a voice or auditorium channel joins that room, shows participants beneath it in the sidebar, and provides a Voice Connected panel with a local microphone voice test that records for five seconds and plays back after a short delay. This is a browser audio test, not a production real-time audio provider.
 6. Community moderators can right-click category headers or channels to open the typed-channel creation modal or create a category. Drag a channel to another category to persist its sidebar placement.
 7. Community moderators can delete a channel from its right-click menu only after typing the channel's exact name. This permanently removes the channel, its messages or forum posts, and its active room entries.
 8. Community moderators can delete a category from its right-click menu only after typing the category's exact name. Its channels are moved to another category so their messages and forum posts remain available.
@@ -74,6 +74,10 @@ The direct-message API is available for signed-in users. The initial community s
 | `DELETE` | `/api/communities/:communityId/categories/:categoryId` | Community moderator |
 | `DELETE` | `/api/channels/:id` | Community moderator |
 | `GET`, `POST` | `/api/channels/:id/messages` | Community member |
+| `GET`, `POST` | `/api/channels/:id/forum-posts` | Community member |
+| `GET`, `POST` | `/api/forum-posts/:id/replies` | Community member |
+| `DELETE` | `/api/forum-posts/:id`, `/api/forum-replies/:id` | Author or community moderator |
+| `DELETE` | `/api/content/:id` | Owning performer or administrator |
 | `DELETE` | `/api/channel-messages/:id` | Message author or moderator |
 | `GET`, `POST` | `/api/direct-conversations` | Signed-in user |
 | `GET`, `POST` | `/api/direct-conversations/:id/messages` | Conversation participant |
